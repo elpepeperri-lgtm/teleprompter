@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Lato:wght@400;700&family=Merriweather:wght@400;700&family=Montserrat:wght@400;600;700&family=Open+Sans:wght@400;600;700&family=Roboto:wght@400;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=5">
+<link rel="stylesheet" href="styles.css?v=6">
 </head>
 <body>
 <main id="app">
@@ -146,6 +146,8 @@
     <div class="srow" id="rowHdr"><span>HDR</span><label class="sw"><input type="checkbox" id="cHdr"><b></b></label></div>
     <div class="srow col"><span>Resolución</span>
       <div class="seg full" id="cRes"><button data-v="720">720p</button><button data-v="1080">1080p</button><button data-v="4k">4K</button></div></div>
+    <div class="srow col"><span>Fotogramas por segundo</span>
+      <div class="seg full" id="cFps"><button data-v="24">24 fps</button><button data-v="30">30 fps</button><button data-v="60">60 fps</button></div></div>
     <div class="srow col"><span>Zoom <em id="zoomVal">1.0×</em></span><input type="range" id="cZoom" min="1" max="4" step="0.1"></div>
     <div class="srow col" id="rowMic"><span>Micrófono</span><select id="cMic" class="select"></select></div>
     <div class="srow col"><span>Fondo</span>
@@ -197,13 +199,14 @@
 <div id="toast" class="toast" hidden></div>
 <input id="fileIn" type="file" accept="application/json,.json" hidden>
 
-<script src="tracker.js?v=5"></script>
-<script src="store.js?v=5"></script>
-<script src="camera.js?v=5"></script>
+<script src="tracker.js?v=6"></script>
+<script src="store.js?v=6"></script>
+<script src="camera.js?v=6"></script>
 <script src="vosk-engine.js?v=2"></script>
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>
+
 
 
 
