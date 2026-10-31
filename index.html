@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Lato:wght@400;700&family=Merriweather:wght@400;700&family=Montserrat:wght@400;600;700&family=Open+Sans:wght@400;600;700&family=Roboto:wght@400;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=2">
+<link rel="stylesheet" href="styles.css?v=3">
 </head>
 <body>
 <main id="app">
@@ -163,6 +163,7 @@
       <div class="seg full" id="tAlign"><button data-v="left">Izquierda</button><button data-v="center">Centrar</button><button data-v="right">Derecha</button></div></div>
     <div class="srow col"><span>Espejo del texto</span>
       <div class="seg full multi"><button id="tMirH">Espejo horizontal</button><button id="tMirV">Espejo vertical</button></div></div>
+    <div class="srow col"><span>Adelanto del resaltado (voz) <em id="leadVal">4</em> palabras</span><input type="range" id="tLead" min="0" max="8" step="1"></div>
     <div class="srow col"><span>Opacidad del fondo <em id="bgVal">55%</em></span><input type="range" id="tBg" min="0" max="100" step="5"></div>
   </div>
 </div>
@@ -195,11 +196,12 @@
 <div id="toast" class="toast" hidden></div>
 <input id="fileIn" type="file" accept="application/json,.json" hidden>
 
-<script src="tracker.js?v=2"></script>
-<script src="store.js?v=2"></script>
-<script src="camera.js?v=2"></script>
-<script src="app.js?v=2"></script>
+<script src="tracker.js?v=3"></script>
+<script src="store.js?v=3"></script>
+<script src="camera.js?v=3"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>
+
 
 
