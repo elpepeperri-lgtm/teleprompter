@@ -337,7 +337,7 @@
     var ov = $('#startOv'), btn = $('#bStart');
     btn.disabled = true;
     try {
-      T.camInfo = DEMO ? await Cam.startDemo() : await Cam.start({ facing: S.camera.facing, res: S.camera.res, micId: S.camera.micId });
+      T.camInfo = DEMO ? await Cam.startDemo() : await Cam.start({ facing: S.camera.facing, res: S.camera.res, fps: S.camera.fps, micId: S.camera.micId });
       T.camOk = true; ov.hidden = true;
       if (!S.started) { S.started = true; Store.saveSettings(); }
       setupAudioMeter(); refreshCamUI(); refreshMics();
@@ -544,7 +544,7 @@
   $('#bRec').addEventListener('click', async function () {
     if (!T.camOk) { $('#startOv').hidden = false; return; }
     if (!T.recording) {
-      try { Cam.startRecording(S.camera.res === '4k' ? 45e6 : S.camera.res === '720' ? 8e6 : 18e6); }
+      try { Cam.startRecording((S.camera.res === '4k' ? 45e6 : S.camera.res === '720' ? 8e6 : 18e6) * (S.camera.fps >= 60 ? 1.4 : 1), S.camera.fps); }
       catch (e) { return UI.info('No se puede grabar', 'Este navegador no admite grabación de video (MediaRecorder).'); }
       T.recording = true; T.t0 = Date.now();
       $('#bRec').classList.add('on'); $('#timer').classList.add('live');
@@ -648,7 +648,7 @@
     var c = S.camera;
     $('#cMirror').checked = c.mirror; $('#cGrid').checked = c.grid; $('#cHdr').checked = c.hdr;
     $('#rowHdr').hidden = !(window.matchMedia && matchMedia('(dynamic-range: high)').matches);
-    segSet('#cRes', c.res); segSet('#cBlur', c.blur ? 1 : 0);
+    segSet('#cRes', c.res); segSet('#cFps', c.fps); segSet('#cBlur', c.blur ? 1 : 0);
     $('#cZoom').value = c.zoom; $('#zoomVal').textContent = c.zoom.toFixed(1) + '×';
     var max = T.camInfo ? T.camInfo.max : 0;
     $('#cRes [data-v="4k"]').disabled = !DEMO && max > 0 && max < 3840;
@@ -693,6 +693,16 @@
       await restartCamera(); refreshCamUI();
     });
   });
+  $$('#cFps button').forEach(function (b) {
+    b.addEventListener('click', async function () {
+      if (S.camera.fps === +b.dataset.v) return;
+      if (T.recording) return UI.toast('Detén la grabación para cambiar los fps');
+      S.camera.fps = +b.dataset.v; Store.saveSettings(); segSet('#cFps', b.dataset.v);
+      await restartCamera(); refreshCamUI();
+      var got = T.camInfo && T.camInfo.settings && T.camInfo.settings.frameRate;
+      if (got && Math.round(got) < S.camera.fps - 2) UI.toast('Tu cámara entrega ' + Math.round(got) + ' fps en esta resolución');
+    });
+  });
   $('#cMic').addEventListener('change', async function (e) {
     if (T.recording) { UI.toast('Detén la grabación para cambiar el micrófono'); return; }
     S.camera.micId = e.target.value; Store.saveSettings(); await restartCamera(); refreshMics();
@@ -728,12 +738,13 @@
   /* ================= arranque ================= */
   renderList();
   if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
-    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js?v=5').catch(function () {}); });
+    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js?v=6').catch(function () {}); });
   }
   // Para pruebas automáticas
   window.__tp = { T: T, setPos: setPos, S: S, openTele: openTele };
   if (/[?&]open=1/.test(location.search)) { var f = Store.list()[0]; if (f) openTele(f.id); }
 })();
+
 
 
 
