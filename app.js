@@ -260,7 +260,17 @@
     var target = Math.max(0, sp.offsetTop - lh * 0.15);
     if (Math.abs(target - T.lastScrollTop) < 2) return;
     T.lastScrollTop = target;
-    if (smooth && sbox.scrollTo) sbox.scrollTo({ top: target, behavior: 'smooth' }); else sbox.scrollTop = target;
+    if (smooth) animScroll(target); else { cancelAnimationFrame(T.scrollAnim); sbox.scrollTop = target; }
+  }
+
+  function animScroll(target) {   // desplazamiento rápido (~180 ms), más ágil que el 'smooth' nativo
+    cancelAnimationFrame(T.scrollAnim);
+    var from = sbox.scrollTop, t0 = performance.now(), dur = 180;
+    (function step(now) {
+      var k = Math.min(1, (now - t0) / dur); k = 1 - Math.pow(1 - k, 3);
+      sbox.scrollTop = from + (target - from) * k;
+      if (k < 1) T.scrollAnim = requestAnimationFrame(step);
+    })(t0);
   }
 
   stext.addEventListener('click', function (e) {
@@ -427,7 +437,7 @@
       if (!T.speechWanted) return;
       T.speechFails++;
       if (T.speechFails > 25) { fallbackAuto('El reconocimiento de voz dejó de responder. Se cambió a “Velocidad automática”.'); return; }
-      setTimeout(launchRecognizer, 120);   // Safari corta la sesión cada cierto tiempo: reiniciar sin perder la posición
+      setTimeout(launchRecognizer, 20);   // Safari corta la sesión cada cierto tiempo: reiniciar sin perder la posición
     };
     T.rec = r;
     try { r.start(); } catch (err) { setTimeout(launchRecognizer, 300); }
