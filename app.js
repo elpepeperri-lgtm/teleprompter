@@ -504,7 +504,7 @@
   $('#bRec').addEventListener('click', async function () {
     if (!T.camOk) { $('#startOv').hidden = false; return; }
     if (!T.recording) {
-      try { Cam.startRecording(S.camera.res === '4k' ? 20e6 : S.camera.res === '720' ? 5e6 : 10e6); }
+      try { Cam.startRecording(S.camera.res === '4k' ? 45e6 : S.camera.res === '720' ? 8e6 : 18e6); }
       catch (e) { return UI.info('No se puede grabar', 'Este navegador no admite grabación de video (MediaRecorder).'); }
       T.recording = true; T.t0 = Date.now();
       $('#bRec').classList.add('on'); $('#timer').classList.add('live');
