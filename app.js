@@ -1,4 +1,4 @@
-(function () {
+﻿(function () {
   'use strict';
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
@@ -524,7 +524,6 @@
     el.src = v.url; pv.hidden = false;
     $('#pvDiscard').hidden = isReview; $('#pvClose').hidden = !isReview;
     $('#pvDiscard').textContent = 'Descartar';
-    if (el.play) el.play().catch(function () {});
   }
   function closePreview() { var el = $('#pvVid'); el.pause(); el.removeAttribute('src'); el.load(); $('#preview').hidden = true; }
   $('#pvClose').addEventListener('click', closePreview);
@@ -671,3 +670,4 @@
   window.__tp = { T: T, setPos: setPos, S: S, openTele: openTele };
   if (/[?&]open=1/.test(location.search)) { var f = Store.list()[0]; if (f) openTele(f.id); }
 })();
+
