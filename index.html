@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Teleprompter</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Teleprompter">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Lato:wght@400;700&family=Merriweather:wght@400;700&family=Montserrat:wght@400;600;700&family=Open+Sans:wght@400;600;700&family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<main id="app">
+
+  <!-- ===== BIBLIOTECA ===== -->
+  <section id="lib" class="screen active">
+    <header class="lib-head">
+      <h1>Guiones</h1>
+      <button id="btnBackup" class="circle sm glass" aria-label="Respaldo">
+        <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+      </button>
+    </header>
+    <div class="search glass">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l5 5"/></svg>
+      <input id="q" type="search" placeholder="Buscar por título o contenido" autocomplete="off" enterkeyhint="search">
+    </div>
+    <ul id="list"></ul>
+    <p id="empty" hidden></p>
+    <button id="btnNew" class="fab">+ Nuevo guion</button>
+  </section>
+
+  <!-- ===== EDITOR ===== -->
+  <section id="editor" class="screen">
+    <header class="ed-head">
+      <button id="edBack" class="pill glass">‹ Atrás</button>
+      <span id="edSaved" class="muted">Guardado</span>
+      <button id="edDone" class="pill accent">Listo</button>
+    </header>
+    <input id="edTitle" class="ed-title" placeholder="Título del guion" autocomplete="off" enterkeyhint="next">
+    <textarea id="edText" class="ed-text" placeholder="Escribe o pega aquí tu guion…" spellcheck="false"></textarea>
+    <footer class="ed-foot muted"><span id="edCount">0 palabras</span></footer>
+  </section>
+
+  <!-- ===== TELEPROMPTER ===== -->
+  <section id="tele" class="screen">
+    <canvas id="cv"></canvas>
+    <video id="vid" playsinline muted autoplay></video>
+    <div id="gridOv" hidden><i></i><i></i><i></i><i></i></div>
+
+    <div class="top">
+      <button id="tClose" class="circle glass" aria-label="Volver a la biblioteca">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+      <div id="timer" class="timer glass">00:00:00</div>
+      <button id="tEdit" class="circle glass" aria-label="Editar guion">
+        <svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M10 12h5M10 16h5"/></svg>
+      </button>
+    </div>
+
+    <div id="boxwrap">
+      <div id="frame">
+        <div id="sbox"><div id="stext"></div></div>
+        <button id="hMove" class="handle l" aria-label="Mover recuadro">
+          <svg viewBox="0 0 24 24"><path d="M12 3v18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12h18M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>
+        </button>
+        <button id="hSize" class="handle r" aria-label="Cambiar tamaño">
+          <svg viewBox="0 0 24 24"><path d="M5 19L19 5M19 5h-6M19 5v6M5 19h6M5 19v-6"/></svg>
+        </button>
+      </div>
+      <div class="roundrow">
+        <button id="bFlip" class="circle glass" aria-label="Cambiar cámara">
+          <svg viewBox="0 0 24 24"><path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><path d="M9 13.5a3 3 0 015.2-2M15 13.5a3 3 0 01-5.2 2M14.5 10.5v1.8h-1.8M9.5 16.5v-1.8h1.8"/></svg>
+        </button>
+        <button id="bFilter" class="circle glass" aria-label="Filtros">
+          <svg viewBox="0 0 24 24"><circle cx="9" cy="10" r="5.5"/><circle cx="15.5" cy="10" r="5.5"/><circle cx="12.2" cy="15.5" r="5.5"/></svg>
+        </button>
+        <button id="bDown" class="circle glass" aria-label="Descargar último video">
+          <svg viewBox="0 0 24 24"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>
+        </button>
+      </div>
+      <div id="filterStrip" class="chips glass" hidden></div>
+    </div>
+
+    <div id="panel" class="glass">
+      <div class="row between">
+        <div class="seg" id="segMode"><button class="on">Video</button></div>
+        <button id="bRehearse" class="pill glass2">▶ Probar</button>
+      </div>
+      <div class="seg full" id="segScroll">
+        <button data-m="voice">Reconocimiento de voz</button>
+        <button data-m="auto">Velocidad automática</button>
+      </div>
+      <div class="row" id="rowVoice">
+        <label class="lbl" for="selLang">Idioma</label>
+        <select id="selLang" class="select">
+          <option value="es-CO">Español (Colombia)</option>
+          <option value="es-ES">Español (España)</option>
+          <option value="es-MX">Español (México)</option>
+          <option value="es-US">Español (EE. UU.)</option>
+        </select>
+      </div>
+      <div class="row" id="rowSpeed" hidden>
+        <label class="lbl" for="rngSpeed">Velocidad</label>
+        <input id="rngSpeed" type="range" min="10" max="150" step="5">
+        <span id="speedVal" class="val"></span>
+      </div>
+      <div class="row controls">
+        <button id="bText" class="circle lg glass2" aria-label="Ajustes de texto"><span class="aa">Aa</span></button>
+        <button id="bRec" class="rec" aria-label="Grabar"><i></i></button>
+        <button id="bCam" class="circle lg glass2" aria-label="Ajustes de cámara">
+          <svg viewBox="0 0 24 24"><path d="M3 7h4l1.5-2h7L17 7h4v12H3z"/><circle cx="12" cy="13" r="3.8"/></svg>
+        </button>
+      </div>
+      <div class="meter"><div class="bars" id="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span>Micrófono del iPhone</span></div>
+    </div>
+
+    <div id="startOv" class="overlay">
+      <div class="card glass">
+        <div class="logo"><i></i></div>
+        <h2>Listo para grabar</h2>
+        <p id="startMsg">Necesitamos acceso a la cámara y al micrófono. Safari te pedirá permiso al tocar el botón.</p>
+        <button id="bStart" class="primary">Empezar</button>
+        <button id="bStartBack" class="link">Volver a mis guiones</button>
+      </div>
+    </div>
+    <div id="warn" class="warn glass" hidden></div>
+  </section>
+</main>
+
+<!-- ===== HOJAS INFERIORES ===== -->
+<div id="backdrop" hidden></div>
+
+<div id="shCam" class="sheet glass" hidden>
+  <div class="sh-head"><h3>Cámara</h3><button class="ok" data-close aria-label="Cerrar">✓</button></div>
+  <div class="sh-body">
+    <div class="srow"><span>Espejo</span><label class="sw"><input type="checkbox" id="cMirror"><b></b></label></div>
+    <div class="srow"><span>Cuadrícula</span><label class="sw"><input type="checkbox" id="cGrid"><b></b></label></div>
+    <div class="srow" id="rowHdr"><span>HDR</span><label class="sw"><input type="checkbox" id="cHdr"><b></b></label></div>
+    <div class="srow col"><span>Resolución</span>
+      <div class="seg full" id="cRes"><button data-v="720">720p</button><button data-v="1080">1080p</button><button data-v="4k">4K</button></div></div>
+    <div class="srow col"><span>Zoom <em id="zoomVal">1.0×</em></span><input type="range" id="cZoom" min="1" max="4" step="0.1"></div>
+    <div class="srow col" id="rowMic"><span>Micrófono</span><select id="cMic" class="select"></select></div>
+    <div class="srow col"><span>Fondo</span>
+      <div class="seg full" id="cBlur"><button data-v="0">Normal</button><button data-v="1">Desenfocado</button></div></div>
+    <div class="srow col"><span>Filtros</span><div id="cFilters" class="chips wrap"></div></div>
+  </div>
+</div>
+
+<div id="shText" class="sheet glass" hidden>
+  <div class="sh-head"><h3>Texto</h3><button class="ok" data-close aria-label="Cerrar">✓</button></div>
+  <div class="sh-body">
+    <div class="srow col"><span>Fuente</span><div id="tFonts" class="chips wrap"></div></div>
+    <div class="srow col"><span>Tamaño <em id="sizeVal">35</em></span><input type="range" id="tSize" min="20" max="80" step="1"></div>
+    <div class="srow col"><span>Alineación</span>
+      <div class="seg full" id="tAlign"><button data-v="left">Izquierda</button><button data-v="center">Centrar</button><button data-v="right">Derecha</button></div></div>
+    <div class="srow col"><span>Espejo del texto</span>
+      <div class="seg full multi"><button id="tMirH">Espejo horizontal</button><button id="tMirV">Espejo vertical</button></div></div>
+    <div class="srow col"><span>Opacidad del fondo <em id="bgVal">55%</em></span><input type="range" id="tBg" min="0" max="100" step="5"></div>
+  </div>
+</div>
+
+<!-- ===== DIÁLOGOS ===== -->
+<div id="modal" class="modal" hidden>
+  <div class="dlg glass">
+    <h3 id="mTitle"></h3>
+    <p id="mMsg"></p>
+    <input id="mInput" class="field" hidden autocomplete="off">
+    <div class="dlg-btns"><button id="mCancel">Cancelar</button><button id="mOk" class="strong">Aceptar</button></div>
+  </div>
+</div>
+<div id="actions" class="modal bottom" hidden>
+  <div class="acts">
+    <div class="acts-list glass"><div id="aTitle" class="acts-title"></div><div id="aItems"></div></div>
+    <button id="aCancel" class="acts-cancel glass">Cancelar</button>
+  </div>
+</div>
+<div id="preview" class="modal full" hidden>
+  <div class="pv">
+    <video id="pvVid" controls playsinline></video>
+    <div class="pv-btns">
+      <button id="pvDiscard" class="danger">Descartar</button>
+      <button id="pvSave" class="primary">Guardar / Compartir</button>
+      <button id="pvClose" class="link" hidden>Cerrar</button>
+    </div>
+  </div>
+</div>
+<div id="toast" class="toast" hidden></div>
+<input id="fileIn" type="file" accept="application/json,.json" hidden>
+
+<script src="tracker.js"></script>
+<script src="store.js"></script>
+<script src="camera.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
