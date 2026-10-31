@@ -1,4 +1,4 @@
-/* Seguimiento de voz: compara palabras reconocidas contra el guion.
+﻿/* Seguimiento de voz: compara palabras reconocidas contra el guion.
    Funciona en navegador (window.Tracker) y en Node (require). */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -53,6 +53,12 @@
     return prev[n];
   }
 
+  // Clave fonética del español: iguala errores típicos del reconocedor (v/b, s/z/c, ll/y, h muda, qu/k...)
+  function phon(s) {
+    return s.replace(/ll/g, 'y').replace(/qu/g, 'k').replace(/c([ei])/g, 's$1').replace(/z/g, 's').replace(/c/g, 'k')
+      .replace(/v/g, 'b').replace(/w/g, 'b').replace(/h/g, '').replace(/x/g, 'ks').replace(/(.)\1+/g, '$1');
+  }
+
   function similarity(a, b) {
     if (a === b) return 1;
     return 1 - lev(a, b) / Math.max(a.length, b.length);
@@ -64,8 +70,9 @@
     if (r === s) return 1 - 0.04 * dist;
     if (Math.min(r.length, s.length) <= 2) return 0;          // palabras cortas: solo exactas
     var sim = similarity(r, s);
+    if (r.length >= 3 && phon(r) === phon(s)) sim = Math.max(sim, 0.95);
     var min = Math.max(r.length, s.length) <= 4 ? 0.75 : 0.7;
-    if (tentative && r.length >= 3 && r.length < s.length && s.indexOf(r) === 0) sim = Math.max(sim, 0.9); // palabra a medias
+    if (tentative && r.length >= 2 && r.length < s.length && s.indexOf(r) === 0) sim = Math.max(sim, 0.9); // palabra a medias
     if (dist > 2) {                                           // saltos largos: exigir más evidencia
       if (s.length < 4) return 0;
       min = 0.8;
@@ -118,3 +125,4 @@
     speechWords: speechWords, lev: lev, create: create, WINDOW: WINDOW
   };
 });
+
