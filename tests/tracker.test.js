@@ -132,3 +132,10 @@ si te gusto este video suscribete y cuentame en los comentarios cual es tu habit
 });
 
 console.log(`\n${passed} pruebas pasaron`);
+
+test('errores fonéticos (v/b, h muda, s/z)', () => {
+  const tr = T.create(norms);
+  speak(tr, 'ola bienbenidos a mi canal oy quiero ablarles de tres abitos');
+  assert.equal(tr.pos, idx('habitos') + 1);
+});
+console.log('fin');
