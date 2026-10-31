@@ -2,7 +2,7 @@
 window.VoskEngine = (function () {
   'use strict';
   var LIB = 'vosk/vosk.js?v=1', MODEL = 'vosk/model-es.tar.gz', CACHE = 'vosk-model-v1';
-  var model = null, loading = null;
+  var PARTS = 4, model = null, loading = null;
 
   function loadScript(src) {
     return new Promise(function (res, rej) {
@@ -16,13 +16,13 @@ window.VoskEngine = (function () {
   async function modelUrl(onProgress) {
     var cache = null;
     try { cache = await caches.open(CACHE); var hit = await cache.match(MODEL); if (hit) return URL.createObjectURL(await hit.blob()); } catch (e) {}
-    var resp = await fetch(MODEL);
-    if (!resp.ok) throw new Error('No se pudo descargar el modelo de voz');
-    var total = +resp.headers.get('Content-Length') || 0, got = 0, parts = [];
-    if (resp.body && resp.body.getReader) {
-      var rd = resp.body.getReader();
-      for (;;) { var r = await rd.read(); if (r.done) break; parts.push(r.value); got += r.value.length; if (onProgress && total) onProgress(got / total); }
-    } else { parts.push(new Uint8Array(await resp.arrayBuffer())); }
+    var parts = [];
+    for (var i = 0; i < PARTS; i++) {   // el modelo se publica en 4 trozos de ~10 MB
+      var resp = await fetch('vosk/model-es.part' + i);
+      if (!resp.ok) throw new Error('No se pudo descargar el modelo de voz');
+      parts.push(new Uint8Array(await resp.arrayBuffer()));
+      if (onProgress) onProgress((i + 1) / PARTS);
+    }
     var blob = new Blob(parts, { type: 'application/gzip' });
     try { if (cache) await cache.put(MODEL, new Response(blob)); } catch (e) {}
     return URL.createObjectURL(blob);
