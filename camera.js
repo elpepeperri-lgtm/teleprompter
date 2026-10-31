@@ -79,7 +79,7 @@ window.Cam = (function () {
     stop();
     var r = RES[opts.res] || RES['1080'];
     var constraints = {
-      video: { facingMode: { ideal: opts.facing || 'user' }, width: { ideal: r[0] }, height: { ideal: r[1] }, frameRate: { ideal: 30 } },
+      video: { facingMode: { ideal: opts.facing || 'user' }, width: { ideal: r[0] }, height: { ideal: r[1] }, frameRate: { ideal: opts.fps || 60 } },
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     };
     if (opts.micId) constraints.audio.deviceId = { exact: opts.micId };
@@ -140,9 +140,9 @@ window.Cam = (function () {
     return '';
   }
 
-  function startRecording(bitrate) {
+  function startRecording(bitrate, fps) {
     if (!stream || !window.MediaRecorder) throw new Error('Grabación no disponible');
-    var vs = canvas.captureStream(30);
+    var vs = canvas.captureStream(fps || 60);
     var tracks = vs.getVideoTracks().concat(stream.getAudioTracks());
     recMime = pickMime();
     var opts = { videoBitsPerSecond: bitrate || 8e6 };
