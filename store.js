@@ -13,7 +13,7 @@ window.Store = (function () {
     text: { font: 'Open Sans', size: 35, align: 'left', mirrorH: false, mirrorV: false, bg: 0.55 },
     camera: { facing: 'user', mirror: true, grid: false, hdr: false, res: '1080', zoom: 1, micId: '', blur: false, filter: 'none' },
     box: { top: 70, left: 0.03, width: 0.94, height: 290 },
-    voice: { lang: 'es-CO', mode: 'voice', speed: 40, lead: 4 },
+    voice: { lang: 'es-CO', mode: 'voice', speed: 40, lead: 4, engine: 'vosk' },
     started: false
   };
 
