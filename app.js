@@ -199,7 +199,7 @@
   var T = {
     id: null, tokens: [], norms: [], spans: [], tracker: null, pos: 0, lastScrollTop: -1,
     recording: false, rehearsing: false, t0: 0, timerId: 0, lastVideo: null, camInfo: null, camOk: false, wake: null,
-    rec: null, speechWanted: false, speechFails: 0, audio: null
+    real: 0, lastAdv: 0, rate: 2.2, rec: null, speechWanted: false, speechFails: 0, audio: null
   };
   var sbox = $('#sbox'), stext = $('#stext'), frame = $('#frame'), wrap = $('#boxwrap');
 
@@ -277,7 +277,7 @@
     var sp = e.target.closest && e.target.closest('.w');
     if (!sp) return;
     var i = +sp.dataset.i;
-    T.tracker.setPos(i); T.pos = -1; setPos(i, false); T.lastScrollTop = -1; scrollToPos(true);
+    T.tracker.setPos(i); T.real = i; T.lastAdv = 0; T.pos = -1; setPos(i, false); T.lastScrollTop = -1; scrollToPos(true);
   });
 
   /* ---------- aplicar ajustes ---------- */
@@ -407,7 +407,7 @@
   function startSpeech() {
     if (T.speechWanted) return;
     if (!SR) { fallbackAuto('El reconocimiento de voz no está disponible en este navegador. Se cambió a “Velocidad automática”.'); return; }
-    T.speechWanted = true; T.speechFails = 0; launchRecognizer();
+    T.speechWanted = true; T.speechFails = 0; T.real = T.pos; T.lastAdv = 0; T.rate = 2.2; launchRecognizer();
   }
   function launchRecognizer() {
     if (!T.speechWanted) return;
@@ -421,7 +421,12 @@
         words = words.concat(Tracker.speechWords(e.results[i][0].transcript));
         isFinal = e.results[i].isFinal;
       }
-      var p = T.tracker.update(words, isFinal);
+      var p = T.tracker.update(words, isFinal), now = performance.now();
+      if (p > T.real) {
+        var dt = (now - T.lastAdv) / 1000;
+        if (T.lastAdv && dt < 3) T.rate = 0.6 * T.rate + 0.4 * clamp((p - T.real) / Math.max(dt, 0.3), 0.5, 5);
+        T.real = p; T.lastAdv = now;
+      }
       if (p > T.pos) setPos(p, true);
     };
     r.onerror = function (e) {
@@ -442,6 +447,18 @@
     T.rec = r;
     try { r.start(); } catch (err) { setTimeout(launchRecognizer, 300); }
   }
+  // Safari entrega el texto con retraso (~1-2 s). Para compensarlo, el resaltado se adelanta según tu ritmo de lectura
+  // (palabras/segundo medido), con un tope configurable. La posición real del reconocedor nunca se modifica.
+  (function leadLoop() {
+    requestAnimationFrame(leadLoop);
+    if (!T.speechWanted || !T.tracker || S.voice.lead <= 0) return;
+    var elapsed = Math.min(1.5, (performance.now() - T.lastAdv) / 1000);
+    if (!T.lastAdv) return;
+    var lead = Math.min(S.voice.lead, Math.round(T.rate * (1.2 + elapsed)));
+    var target = Math.min(T.norms.length, T.real + lead);
+    if (target > T.pos) setPos(target, true);
+  })();
+
   function stopSpeech() {
     T.speechWanted = false;
     var r = T.rec; T.rec = null;
@@ -669,6 +686,7 @@
     $('#tSize').value = t.size; $('#sizeVal').textContent = t.size;
     segSet('#tAlign', t.align);
     $('#tMirH').classList.toggle('on', t.mirrorH); $('#tMirV').classList.toggle('on', t.mirrorV);
+    $('#tLead').value = S.voice.lead; $('#leadVal').textContent = S.voice.lead;
     $('#tBg').value = Math.round(t.bg * 100); $('#bgVal').textContent = Math.round(t.bg * 100) + '%';
   }
   $('#bText').addEventListener('click', function () { refreshTextUI(); UI.sheet('#shText'); });
@@ -676,16 +694,18 @@
   $$('#tAlign button').forEach(function (b) { b.addEventListener('click', function () { S.text.align = b.dataset.v; Store.saveSettings(); applyText(); segSet('#tAlign', b.dataset.v); }); });
   $('#tMirH').addEventListener('click', function () { S.text.mirrorH = !S.text.mirrorH; Store.saveSettings(); applyText(); refreshTextUI(); });
   $('#tMirV').addEventListener('click', function () { S.text.mirrorV = !S.text.mirrorV; Store.saveSettings(); applyText(); refreshTextUI(); });
+  $('#tLead').addEventListener('input', function (e) { S.voice.lead = +e.target.value; $('#leadVal').textContent = S.voice.lead; Store.saveSettings(); });
   $('#tBg').addEventListener('input', function (e) { S.text.bg = +e.target.value / 100; $('#bgVal').textContent = e.target.value + '%'; Store.saveSettings(); applyText(); });
 
   /* ================= arranque ================= */
   renderList();
   if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
-    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js?v=2').catch(function () {}); });
+    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js?v=3').catch(function () {}); });
   }
   // Para pruebas automáticas
   window.__tp = { T: T, setPos: setPos, S: S, openTele: openTele };
   if (/[?&]open=1/.test(location.search)) { var f = Store.list()[0]; if (f) openTele(f.id); }
 })();
+
 
 
