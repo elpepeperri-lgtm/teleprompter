@@ -481,18 +481,6 @@
     T.rec = r;
     try { r.start(); } catch (err) { setTimeout(launchRecognizer, 300); }
   }
-  // Safari entrega el texto con retraso (~1-2 s). Para compensarlo, el resaltado se adelanta según tu ritmo de lectura
-  // (palabras/segundo medido), con un tope configurable. La posición real del reconocedor nunca se modifica.
-  (function leadLoop() {
-    requestAnimationFrame(leadLoop);
-    if (!T.speechWanted || !T.tracker || T.engine !== 'apple' || S.voice.lead <= 0) return;   // solo el motor de Safari lo necesita
-    var elapsed = Math.min(1.5, (performance.now() - T.lastAdv) / 1000);
-    if (!T.lastAdv) return;
-    var lead = Math.min(S.voice.lead, Math.round(T.rate * (1.2 + elapsed)));
-    var target = Math.min(T.norms.length, T.real + lead);
-    if (target > T.pos) setPos(target, true);
-  })();
-
   function stopSpeech() {
     T.speechWanted = false;
     if (T.vosk) { T.vosk.stop(); T.vosk = null; }
@@ -722,7 +710,6 @@
     segSet('#tAlign', t.align);
     $('#tMirH').classList.toggle('on', t.mirrorH); $('#tMirV').classList.toggle('on', t.mirrorV);
     $$('#tEngine button').forEach(function (b) { b.classList.toggle('on', b.dataset.v === S.voice.engine); });
-    $('#tLead').value = S.voice.lead; $('#leadVal').textContent = S.voice.lead;
     $('#tBg').value = Math.round(t.bg * 100); $('#bgVal').textContent = Math.round(t.bg * 100) + '%';
   }
   $('#bText').addEventListener('click', function () { refreshTextUI(); UI.sheet('#shText'); });
@@ -736,18 +723,19 @@
       if (T.speechWanted) { stopSpeech(); syncScrollEngines(); }
     });
   });
-  $('#tLead').addEventListener('input', function (e) { S.voice.lead = +e.target.value; $('#leadVal').textContent = S.voice.lead; Store.saveSettings(); });
   $('#tBg').addEventListener('input', function (e) { S.text.bg = +e.target.value / 100; $('#bgVal').textContent = e.target.value + '%'; Store.saveSettings(); applyText(); });
 
   /* ================= arranque ================= */
   renderList();
   if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
-    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js?v=4').catch(function () {}); });
+    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js?v=5').catch(function () {}); });
   }
   // Para pruebas automáticas
   window.__tp = { T: T, setPos: setPos, S: S, openTele: openTele };
   if (/[?&]open=1/.test(location.search)) { var f = Store.list()[0]; if (f) openTele(f.id); }
 })();
+
+
 
 
 
