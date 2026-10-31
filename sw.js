@@ -1,5 +1,5 @@
-﻿const CACHE = 'teleprompter-v3';
-const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'tracker.js', 'store.js', 'camera.js',
+﻿const CACHE = 'teleprompter-v4';
+const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'tracker.js', 'store.js', 'camera.js', 'vosk-engine.js',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
@@ -18,6 +18,7 @@ self.addEventListener('fetch', (e) => {
   const sameOrigin = url.origin === location.origin;
   const isFont = /fonts\.(googleapis|gstatic)\.com$/.test(url.hostname);
   if (!sameOrigin && !isFont) return;
+  if (url.pathname.includes('/vosk/')) return;   // el motor de voz se guarda aparte (vosk-engine.js)
   if (isFont) {   // fuentes: caché primero
     e.respondWith(caches.match(req).then((hit) => hit || fetch(req).then((res) => {
       const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); return res;
@@ -29,5 +30,7 @@ self.addEventListener('fetch', (e) => {
     const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); return res;
   }).catch(() => caches.match(req).then((hit) => hit || caches.match('./'))));
 });
+
+
 
 
