@@ -199,7 +199,7 @@
   var T = {
     id: null, tokens: [], norms: [], spans: [], tracker: null, pos: 0, lastScrollTop: -1,
     recording: false, rehearsing: false, t0: 0, timerId: 0, lastVideo: null, camInfo: null, camOk: false, wake: null,
-    real: 0, lastAdv: 0, rate: 2.2, rec: null, speechWanted: false, speechFails: 0, audio: null
+    engine: 'vosk', vosk: null, real: 0, lastAdv: 0, rate: 2.2, rec: null, speechWanted: false, speechFails: 0, audio: null
   };
   var sbox = $('#sbox'), stext = $('#stext'), frame = $('#frame'), wrap = $('#boxwrap');
 
@@ -404,10 +404,50 @@
   function fallbackAuto(msg) {
     stopSpeech(); S.voice.mode = 'auto'; Store.saveSettings(); applyVoiceUI(); warn(msg); syncScrollEngines();
   }
+  function applyWords(words, isFinal) {
+    var p = T.tracker.update(words, isFinal), now = performance.now();
+    if (p > T.real) {
+      var dt = (now - T.lastAdv) / 1000;
+      if (T.lastAdv && dt < 3) T.rate = 0.6 * T.rate + 0.4 * clamp((p - T.real) / Math.max(dt, 0.3), 0.5, 5);
+      T.real = p; T.lastAdv = now;
+    }
+    if (p > T.pos) setPos(p, true);
+  }
+
   function startSpeech() {
     if (T.speechWanted) return;
+    T.speechWanted = true; T.speechFails = 0; T.real = T.pos; T.lastAdv = 0; T.rate = 2.2;
+    if (S.voice.engine === 'vosk') { startVosk(); return; }
+    startApple();
+  }
+  function startApple() {
+    T.engine = 'apple';
     if (!SR) { fallbackAuto('El reconocimiento de voz no está disponible en este navegador. Se cambió a “Velocidad automática”.'); return; }
-    T.speechWanted = true; T.speechFails = 0; T.real = T.pos; T.lastAdv = 0; T.rate = 2.2; launchRecognizer();
+    launchRecognizer();
+  }
+
+  // Motor local (Vosk): el audio se reconoce dentro del teléfono; los parciales llegan casi al instante.
+  async function startVosk() {
+    T.engine = 'vosk';
+    try {
+      if (!VoskEngine.ready) warn('Preparando el motor de voz rápido… la primera vez descarga ~40 MB (solo una vez).', 60000);
+      await VoskEngine.load(function (f, done) { if (!done) warn('Descargando motor de voz: ' + Math.round(f * 100) + '% (solo la primera vez)', 60000); else warn('Iniciando motor de voz…', 60000); });
+      $('#warn').hidden = true;
+      if (!T.speechWanted) return;
+      if (!Cam.stream || !Cam.stream.getAudioTracks().length) throw new Error('sin audio');
+      T.tracker.resetSession();
+      var finals = [];
+      T.vosk = VoskEngine.start(Cam.stream, {
+        onPartial: function (t) { if (T.speechWanted) applyWords(finals.concat(Tracker.speechWords(t)), false); },
+        onFinal: function (t) { if (!T.speechWanted) return; finals = finals.concat(Tracker.speechWords(t)); applyWords(finals, true); }
+      });
+      warn('Motor de voz rápido activo', 1500);
+    } catch (e) {
+      if (!T.speechWanted) return;
+      S.voice.engine = 'apple'; Store.saveSettings(); refreshTextUI();
+      warn('No se pudo iniciar el motor rápido (' + (e && e.message || 'error') + '). Se usa el reconocimiento de Safari.', 6000);
+      startApple();
+    }
   }
   function launchRecognizer() {
     if (!T.speechWanted) return;
@@ -421,13 +461,7 @@
         words = words.concat(Tracker.speechWords(e.results[i][0].transcript));
         isFinal = e.results[i].isFinal;
       }
-      var p = T.tracker.update(words, isFinal), now = performance.now();
-      if (p > T.real) {
-        var dt = (now - T.lastAdv) / 1000;
-        if (T.lastAdv && dt < 3) T.rate = 0.6 * T.rate + 0.4 * clamp((p - T.real) / Math.max(dt, 0.3), 0.5, 5);
-        T.real = p; T.lastAdv = now;
-      }
-      if (p > T.pos) setPos(p, true);
+      applyWords(words, isFinal);
     };
     r.onerror = function (e) {
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
@@ -451,7 +485,7 @@
   // (palabras/segundo medido), con un tope configurable. La posición real del reconocedor nunca se modifica.
   (function leadLoop() {
     requestAnimationFrame(leadLoop);
-    if (!T.speechWanted || !T.tracker || S.voice.lead <= 0) return;
+    if (!T.speechWanted || !T.tracker || T.engine !== 'apple' || S.voice.lead <= 0) return;   // solo el motor de Safari lo necesita
     var elapsed = Math.min(1.5, (performance.now() - T.lastAdv) / 1000);
     if (!T.lastAdv) return;
     var lead = Math.min(S.voice.lead, Math.round(T.rate * (1.2 + elapsed)));
@@ -461,6 +495,7 @@
 
   function stopSpeech() {
     T.speechWanted = false;
+    if (T.vosk) { T.vosk.stop(); T.vosk = null; }
     var r = T.rec; T.rec = null;
     if (r) { r.onend = null; try { r.abort(); } catch (e) {} }
   }
@@ -686,6 +721,7 @@
     $('#tSize').value = t.size; $('#sizeVal').textContent = t.size;
     segSet('#tAlign', t.align);
     $('#tMirH').classList.toggle('on', t.mirrorH); $('#tMirV').classList.toggle('on', t.mirrorV);
+    $$('#tEngine button').forEach(function (b) { b.classList.toggle('on', b.dataset.v === S.voice.engine); });
     $('#tLead').value = S.voice.lead; $('#leadVal').textContent = S.voice.lead;
     $('#tBg').value = Math.round(t.bg * 100); $('#bgVal').textContent = Math.round(t.bg * 100) + '%';
   }
@@ -694,18 +730,25 @@
   $$('#tAlign button').forEach(function (b) { b.addEventListener('click', function () { S.text.align = b.dataset.v; Store.saveSettings(); applyText(); segSet('#tAlign', b.dataset.v); }); });
   $('#tMirH').addEventListener('click', function () { S.text.mirrorH = !S.text.mirrorH; Store.saveSettings(); applyText(); refreshTextUI(); });
   $('#tMirV').addEventListener('click', function () { S.text.mirrorV = !S.text.mirrorV; Store.saveSettings(); applyText(); refreshTextUI(); });
+  $$('#tEngine button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      S.voice.engine = b.dataset.v; Store.saveSettings(); refreshTextUI();
+      if (T.speechWanted) { stopSpeech(); syncScrollEngines(); }
+    });
+  });
   $('#tLead').addEventListener('input', function (e) { S.voice.lead = +e.target.value; $('#leadVal').textContent = S.voice.lead; Store.saveSettings(); });
   $('#tBg').addEventListener('input', function (e) { S.text.bg = +e.target.value / 100; $('#bgVal').textContent = e.target.value + '%'; Store.saveSettings(); applyText(); });
 
   /* ================= arranque ================= */
   renderList();
   if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
-    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js?v=3').catch(function () {}); });
+    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js?v=4').catch(function () {}); });
   }
   // Para pruebas automáticas
   window.__tp = { T: T, setPos: setPos, S: S, openTele: openTele };
   if (/[?&]open=1/.test(location.search)) { var f = Store.list()[0]; if (f) openTele(f.id); }
 })();
+
 
 
 
