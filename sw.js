@@ -1,4 +1,4 @@
-﻿const CACHE = 'teleprompter-v2';
+﻿const CACHE = 'teleprompter-v3';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'tracker.js', 'store.js', 'camera.js',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
@@ -29,4 +29,5 @@ self.addEventListener('fetch', (e) => {
     const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); return res;
   }).catch(() => caches.match(req).then((hit) => hit || caches.match('./'))));
 });
+
 
