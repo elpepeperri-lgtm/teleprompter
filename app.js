@@ -533,15 +533,22 @@
     var v = T.lastVideo, pv = $('#preview'), el = $('#pvVid');
     el.src = v.url; pv.hidden = false;
     $('#pvDiscard').hidden = isReview; $('#pvClose').hidden = !isReview;
-    $('#pvDiscard').textContent = 'Descartar';
+    disarmDiscard();
   }
   function closePreview() { var el = $('#pvVid'); el.pause(); el.removeAttribute('src'); el.load(); $('#preview').hidden = true; }
   $('#pvClose').addEventListener('click', closePreview);
+  var discardTimer;
+  function disarmDiscard() { clearTimeout(discardTimer); var b = $('#pvDiscard'); b.dataset.armed = ''; b.textContent = 'Descartar'; b.style.background = ''; b.style.color = ''; }
   $('#pvDiscard').addEventListener('click', function () {
-    UI.confirm('¿Descartar el video?', 'Se eliminará esta grabación.', 'Descartar').then(function (ok) {
-      if (!ok) return;
-      closePreview(); if (T.lastVideo) URL.revokeObjectURL(T.lastVideo.url); T.lastVideo = null; UI.toast('Video descartado');
-    });
+    var b = this;
+    if (b.dataset.armed !== '1') {   // primer toque: confirmar en el mismo botón (sin ventana aparte)
+      b.dataset.armed = '1'; b.textContent = 'Toca otra vez para borrar'; b.style.background = '#ff453a'; b.style.color = '#fff';
+      discardTimer = setTimeout(disarmDiscard, 4000);
+      return;
+    }
+    disarmDiscard(); closePreview();
+    if (T.lastVideo) URL.revokeObjectURL(T.lastVideo.url);
+    T.lastVideo = null; UI.toast('Video descartado');
   });
   $('#pvSave').addEventListener('click', async function () {
     var v = T.lastVideo; if (!v) return;
@@ -674,10 +681,11 @@
   /* ================= arranque ================= */
   renderList();
   if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
-    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
+    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js?v=2').catch(function () {}); });
   }
   // Para pruebas automáticas
   window.__tp = { T: T, setPos: setPos, S: S, openTele: openTele };
   if (/[?&]open=1/.test(location.search)) { var f = Store.list()[0]; if (f) openTele(f.id); }
 })();
+
 
