@@ -712,7 +712,7 @@
     var txt = '';
     try { var o = await VDB.load(); if (o) txt += 'ORIGINAL\n' + await Mp4Fix.describe(o.blob) + '\n\n'; } catch (e) {}
     try { txt += 'CORREGIDO\n' + await Mp4Fix.describe(v.blob); } catch (e) { txt += 'error: ' + e.message; }
-    UI.info('Info técnica (v17 · ' + (v.dur ? fmtDur(v.dur) : '?') + ')', txt);
+    UI.info('Info técnica (v' + APP_V + ' · ' + (v.dur ? fmtDur(v.dur) : '?') + ')', txt);
   });  // Aviso en la pantalla de inicio mientras haya un video grabado sin descartar.
   function updateLast() { $('#btnLast').hidden = !T.lastVideo; }
   $('#btnLast').addEventListener('click', function () { if (T.lastVideo) showPreview(true); });
@@ -939,7 +939,19 @@
   /* ================= arranque ================= */
   renderList();
   if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
-    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js?v=6').catch(function () {}); });
+    window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js?v=6').then(function (r) { r.update(); }).catch(function () {}); });
+  }
+  // Si hay una versión publicada más nueva que la abierta, se borra la copia guardada y se recarga (una vez por versión).
+  var APP_V = 18;
+  if (location.protocol.indexOf('http') === 0) {
+    fetch('version.json?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(async function (j) {
+      if (!(j && j.v > APP_V)) return;
+      var key = 'tp.updated.' + j.v;
+      try { if (sessionStorage.getItem(key)) return; sessionStorage.setItem(key, '1'); } catch (e) {}
+      try { var ks = await caches.keys(); await Promise.all(ks.filter(function (k) { return k.indexOf('vosk') < 0; }).map(function (k) { return caches.delete(k); })); } catch (e) {}
+      try { var regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(function (r) { return r.update(); })); } catch (e) {}
+      if (!T.recording) location.reload();
+    }).catch(function () {});
   }
   // Para pruebas automáticas
   window.__tp = { T: T, setPos: setPos, S: S, openTele: openTele };
