@@ -196,3 +196,6 @@ input[type=range] { flex: 1; width: 100%; accent-color: var(--accent); height: 3
 .pv-btns { position: static; display: flex; flex-wrap: wrap; gap: 10px; padding: 0; }
 .pv-btns .primary { flex: 1 1 100%; order: -1; }
 .pv-btns .danger, .pv-btns .link { flex: 1; }
+
+.appver { text-align: center; color: var(--muted); font-size: 12px; opacity: .6; margin: 18px 0 90px; }
+#mMsg { white-space: pre-wrap; word-break: break-word; max-height: 55vh; overflow-y: auto; }
