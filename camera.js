@@ -92,21 +92,24 @@ window.Cam = (function () {
     }
   }
 
+  // Audio "crudo", como la app Cámara: sin cancelación de eco, supresión de ruido ni ganancia automática.
+  // Ese procesado es para llamadas: deja la voz con sonido de teléfono y arruina un micrófono externo.
+  var RAW_AUDIO = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, sampleRate: { ideal: 48000 } };
+  var BUILTIN = /iphone|ipad|integrad|built.?in|interno|predeterminad|default/i;
+  function gum(c) { return navigator.mediaDevices.getUserMedia(c); }
+  function rawAudio(id) { var a = Object.assign({}, RAW_AUDIO); if (id) a.deviceId = { exact: id }; return a; }
+
   async function start(opts) {
     stop();
     var r = RES[opts.res] || RES['1080'];
-    var constraints = {
-      video: { facingMode: { ideal: opts.facing || 'user' }, width: { ideal: r[0] }, height: { ideal: r[1] }, frameRate: { ideal: opts.fps || 60 } },
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-    };
-    // Con un micrófono elegido (lavalier/inalámbrico) se desactiva el procesado del teléfono para conservar su calidad.
-    if (opts.micId) constraints.audio = { deviceId: { exact: opts.micId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+    var vc = { facingMode: { ideal: opts.facing || 'user' }, width: { ideal: r[0] }, height: { ideal: r[1] }, frameRate: { ideal: opts.fps || 60 } };
     try {
-      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      stream = await gum({ video: vc, audio: rawAudio(opts.micId) });
     } catch (e) {
-      if (opts.micId && e.name === 'OverconstrainedError') { delete constraints.audio.deviceId; stream = await navigator.mediaDevices.getUserMedia(constraints); }
+      if (opts.micId && (e.name === 'OverconstrainedError' || e.name === 'NotFoundError')) stream = await gum({ video: vc, audio: rawAudio('') });
       else throw e;
     }
+    if (!opts.micId) await preferExternalMic();
     video.srcObject = stream;
     await video.play();
     running = true;
@@ -137,11 +140,25 @@ window.Cam = (function () {
     return info();
   }
 
+  // Si hay un micrófono externo conectado (receptor USB-C del Lark, Rode, DJI…), se usa ese en vez del del iPhone.
+  async function preferExternalMic() {
+    try {
+      var cur = stream.getAudioTracks()[0]; if (!cur) return;
+      if (cur.label && !BUILTIN.test(cur.label)) return;            // ya es externo
+      var devs = (await navigator.mediaDevices.enumerateDevices()).filter(function (d) { return d.kind === 'audioinput' && d.label; });
+      var ext = devs.filter(function (d) { return !BUILTIN.test(d.label) && d.deviceId && d.deviceId !== 'default'; })[0];
+      if (!ext) return;
+      var a = await gum({ audio: rawAudio(ext.deviceId) }), t = a.getAudioTracks()[0];
+      if (!t) return;
+      stream.removeTrack(cur); cur.stop(); stream.addTrack(t);
+    } catch (e) {}
+  }
+
   function info() {
-    var vt = stream.getVideoTracks()[0], caps = {};
+    var vt = stream.getVideoTracks()[0], at = stream.getAudioTracks()[0], caps = {};
     try { caps = vt.getCapabilities ? vt.getCapabilities() : {}; } catch (e) {}
     var max = Math.max((caps.width && caps.width.max) || 0, (caps.height && caps.height.max) || 0);
-    return { stream: stream, max: max, settings: vt.getSettings ? vt.getSettings() : {} };
+    return { stream: stream, max: max, settings: vt.getSettings ? vt.getSettings() : {}, mic: at ? at.label : '' };
   }
 
   // Miniatura JPEG pequeña del cuadro actual (para la vista previa sin cargar el video).
@@ -162,8 +179,10 @@ window.Cam = (function () {
     if (video) video.srcObject = null;
   }
 
+  // HEVC primero: es el formato de la cámara del iPhone (mejor calidad por MB). Si no está, H.264.
   function pickMime() {
-    var list = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4',
+    var list = ['video/mp4;codecs=hvc1,mp4a.40.2', 'video/mp4;codecs=hev1,mp4a.40.2', 'video/mp4;codecs="hvc1.1.6.L123.B0,mp4a.40.2"',
+      'video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4',
       'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
     if (!window.MediaRecorder) return '';
     for (var i = 0; i < list.length; i++) if (MediaRecorder.isTypeSupported(list[i])) return list[i];
@@ -206,6 +225,8 @@ window.Cam = (function () {
   return {
     init: init, start: start, startDemo: startDemo, stop: stop, startRecording: startRecording, stopRecording: stopRecording, thumb: thumb,
     get direct() { return direct(); },
+    get hevc() { return /hvc1|hev1/.test(pickMime()); },
+    get mime() { return pickMime(); },
     params: params,
     get stream() { return stream; },
     get recording() { return !!recorder && recorder.state !== 'inactive'; }

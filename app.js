@@ -435,7 +435,7 @@
       $('#warn').hidden = true;
       if (!T.speechWanted) return;
       if (!Cam.stream || !Cam.stream.getAudioTracks().length) throw new Error('sin audio');
-      T.tracker.resetSession();
+      if (T.tracker) T.tracker.resetSession();
       var finals = [];
       T.vosk = VoskEngine.start(Cam.stream, {
         onPartial: function (t) { if (T.speechWanted) applyWords(finals.concat(Tracker.speechWords(t)), false); },
@@ -453,7 +453,7 @@
     if (!T.speechWanted) return;
     var r = new SR();
     r.lang = S.voice.lang; r.continuous = true; r.interimResults = true; r.maxAlternatives = 1;
-    T.tracker.resetSession();
+    if (T.tracker) T.tracker.resetSession();
     r.onresult = function (e) {
       T.speechFails = 0;
       var words = [], isFinal = false;
@@ -550,7 +550,7 @@
       catch (e) { onChunk = null; }
       try {
         var info = Cam.startRecording(br, S.camera.fps, onChunk);
-        T.meta = { type: info.type, ext: info.ext, done: false, dur: 0, thumb: Cam.thumb() };
+        T.meta = { type: info.type, ext: info.ext, done: false, dur: 0, thumb: Cam.thumb(), cap: captureText() + (info.direct ? ' · directo' : ' · con efectos') };
         if (onChunk) { T.pending = VDB.begin(T.meta).catch(function () { T.chunkErr = true; }); }
       }
       catch (e) { return UI.info('No se puede grabar', 'Este navegador no admite grabación de video (MediaRecorder).'); }
@@ -710,7 +710,13 @@
   $('#pvDiag').addEventListener('click', async function () {
     var v = T.lastVideo; if (!v) return;
     var txt = '';
-    try { var o = await VDB.load(); if (o) txt += 'ORIGINAL\n' + await Mp4Fix.describe(o.blob) + '\n\n'; } catch (e) {}
+    try {
+      var o = await VDB.load();
+      if (o) {
+        if (o.meta && o.meta.cap) txt += 'CÁMARA\n' + o.meta.cap + '\n\n';
+        txt += 'ORIGINAL (Safari)\n' + await Mp4Fix.describe(o.blob) + '\n\n';
+      }
+    } catch (e) {}
     try { txt += 'CORREGIDO\n' + await Mp4Fix.describe(v.blob); } catch (e) { txt += 'error: ' + e.message; }
     UI.info('Info técnica (v' + APP_V + ' · ' + (v.dur ? fmtDur(v.dur) : '?') + ')', txt);
   });  // Aviso en la pantalla de inicio mientras haya un video grabado sin descartar.
@@ -804,15 +810,16 @@
 
   /* ---------- hojas: cámara ---------- */
   function segSet(sel, val) { $$(sel + ' button').forEach(function (b) { b.classList.toggle('on', b.dataset.v === String(val)); }); }
-  // Calidad de grabación (Mbps a 30 / 60 fps). "Máxima" se parece a lo que graba la cámara del iPhone en H.264.
+  // Calidad de grabación en Mbps a 30 / 60 fps, para HEVC. "Máxima" = lo que graba la app Cámara del iPhone
+  // (1080p30 ≈ 60 MB/min, 1080p60 ≈ 100 MB/min, 4K30 ≈ 170 MB/min). Si Safari solo permite H.264, se sube ×1,6.
   var QUALITY = {
-    max:  { '720': [8, 12], '1080': [16, 24], '4k': [45, 65] },
-    high: { '720': [5, 7],  '1080': [10, 14], '4k': [28, 40] },
-    lite: { '720': [3, 4],  '1080': [5, 7],   '4k': [14, 20] }
+    max:  { '720': [5, 8],  '1080': [9, 14], '4k': [24, 40] },
+    high: { '720': [4, 6],  '1080': [7, 10], '4k': [16, 26] },
+    lite: { '720': [2, 3],  '1080': [4, 6],  '4k': [10, 16] }
   };
   function bitrate() {
     var q = QUALITY[S.camera.quality] || QUALITY.max, r = q[S.camera.res] || q['1080'];
-    return r[S.camera.fps >= 60 ? 1 : 0] * 1e6;
+    return r[S.camera.fps >= 60 ? 1 : 0] * 1e6 * (Cam.hevc ? 1 : 1.6);
   }
   function qualityHint() {
     var el = $('#qualityHint'); if (!el) return;
@@ -825,9 +832,17 @@
     });
   });
 
+  // Lo que de verdad entrega la cámara (no lo que se pidió): resolución, fps, códec y micrófono.
+  function captureText() {
+    var st = (T.camInfo && T.camInfo.settings) || {}, w = st.width || 0, h = st.height || 0;
+    var codec = /hvc1|hev1/.test(Cam.mime) ? 'HEVC' : /avc1/.test(Cam.mime) ? 'H.264' : (Cam.mime.split(';')[0] || '?');
+    return (w ? Math.max(w, h) + '×' + Math.min(w, h) : '?') + ' · ' + (st.frameRate ? Math.round(st.frameRate) + ' fps' : '? fps') +
+      ' · ' + codec + ' · ' + Math.round(bitrate() / 1e6) + ' Mbps · Mic: ' + (micLabel() || 'ninguno');
+  }
   function refreshCamUI() {
     var c = S.camera;
     qualityHint();
+    $('#camStatus').textContent = T.camOk ? 'Grabando con: ' + captureText() : '';
     $('#cMirror').checked = c.mirror; $('#cGrid').checked = c.grid; $('#cHdr').checked = c.hdr;
     $('#rowHdr').hidden = !(window.matchMedia && matchMedia('(dynamic-range: high)').matches);
     segSet('#cRes', c.res); segSet('#cFps', c.fps); segSet('#cQuality', c.quality); segSet('#cBlur', c.blur ? 1 : 0);
@@ -942,7 +957,7 @@
     window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js?v=6').then(function (r) { r.update(); }).catch(function () {}); });
   }
   // Si hay una versión publicada más nueva que la abierta, se borra la copia guardada y se recarga (una vez por versión).
-  var APP_V = 18;
+  var APP_V = 19;
   if (location.protocol.indexOf('http') === 0) {
     fetch('version.json?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(async function (j) {
       if (!(j && j.v > APP_V)) return;
