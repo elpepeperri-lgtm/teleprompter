@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Lato:wght@400;700&family=Merriweather:wght@400;700&family=Montserrat:wght@400;600;700&family=Open+Sans:wght@400;600;700&family=Roboto:wght@400;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=13">
+<link rel="stylesheet" href="styles.css?v=14">
 </head>
 <body>
 <main id="app">
@@ -191,23 +191,30 @@
 </div>
 <div id="preview" class="modal full" hidden>
   <div class="pv">
-    <video id="pvVid" controls playsinline webkit-playsinline preload="metadata"></video>
+    <div class="pv-media">
+      <img id="pvThumb" alt="" hidden>
+      <video id="pvVid" controls playsinline webkit-playsinline preload="none" hidden></video>
+      <button id="pvPlay" class="pv-play" hidden>▶ Ver video</button>
+    </div>
+    <p id="pvInfo" class="pv-info"></p>
+    <div id="pvParts" class="pv-parts" hidden></div>
     <div class="pv-btns">
+      <button id="pvSave" class="primary">Guardar en Fotos</button>
       <button id="pvDiscard" class="danger">Descartar</button>
-      <button id="pvSave" class="primary">Guardar en Fotos / Compartir</button>
       <button id="pvClose" class="link" hidden>Cerrar</button>
+      <button id="pvDown" class="link">Descargar a Archivos</button>
     </div>
   </div>
 </div>
 <div id="toast" class="toast" hidden></div>
 <input id="fileIn" type="file" accept="application/json,.json" hidden>
 
-<script src="tracker.js?v=13"></script>
-<script src="store.js?v=13"></script>
-<script src="camera.js?v=13"></script>
-<script src="mp4fix.js?v=13"></script>
+<script src="tracker.js?v=14"></script>
+<script src="store.js?v=14"></script>
+<script src="camera.js?v=14"></script>
+<script src="mp4fix.js?v=14"></script>
 <script src="vosk-engine.js?v=3"></script>
-<script src="app.js?v=13"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>
 
