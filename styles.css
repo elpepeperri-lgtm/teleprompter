@@ -199,3 +199,4 @@ input[type=range] { flex: 1; width: 100%; accent-color: var(--accent); height: 3
 
 .appver { text-align: center; color: var(--muted); font-size: 12px; opacity: .6; margin: 18px 0 90px; }
 #mMsg { white-space: pre-wrap; word-break: break-word; max-height: 55vh; overflow-y: auto; }
+.vtag { font-size: 13px; font-weight: 600; color: var(--muted); vertical-align: middle; margin-left: 6px; }
