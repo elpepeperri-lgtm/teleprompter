@@ -66,7 +66,8 @@
 
   // Puntaje (0 = no coincide) de la palabra reconocida r contra la del guion s a distancia dist.
   function score(r, s, dist, tentative) {
-    if (dist > 2 && s.length < 4) return 0;                   // palabras cortas no justifican saltos
+    if (dist > 0 && s.length < 3) return 0;                   // palabras cortas (de, la, y…) solo cuentan en su lugar exacto
+    if (dist > 1 && s.length < 4) return 0;                   // palabras cortas no justifican saltos
     if (r === s) return 1 - 0.04 * dist;
     if (Math.min(r.length, s.length) <= 2) return 0;          // palabras cortas: solo exactas
     var sim = similarity(r, s);
@@ -84,7 +85,9 @@
     opts = opts || {};
     var win = opts.window || WINDOW;
     var pos = opts.start || 0;         // índice de la palabra actual (monótono)
-    var cPos = pos, cSeen = 0, lastLen = 0;
+    // El reconocedor revisa sus parciales; por eso cada actualización se alinea de nuevo desde el inicio de la
+    // frase en curso (basePos) en vez de acumular, y así una palabra repetida no se cuenta dos veces.
+    var basePos = pos, cBase = 0, lastLen = 0;
 
     function find(r, from, tentative) {
       var best = -1, bestScore = 0, end = Math.min(norms.length, from + win);
@@ -101,22 +104,20 @@
       // words: lista completa (normalizada) de la sesión de reconocimiento actual
       update: function (words, isFinal) {
         var n = words.length;
-        if (n < cSeen) cSeen = n;
-        var commitTo = isFinal ? n : Math.max(cSeen, n - 1);
-        var p = cPos, committed = cPos;
-        for (var i = cSeen; i < n; i++) {
+        if (n < cBase) { cBase = 0; basePos = pos; }
+        var p = basePos;
+        for (var i = cBase; i < n; i++) {
           var j = find(words[i], p, !isFinal && i === n - 1);
           if (j >= 0) p = j + 1;
-          if (i + 1 === commitTo) committed = p;
         }
-        if (commitTo > cSeen) { cPos = committed; cSeen = commitTo; }
         lastLen = n;
+        if (isFinal) { cBase = n; basePos = Math.max(p, pos); }
         if (p > pos) pos = p;          // nunca retrocede
         return pos;
       },
-      resetSession: function () { cSeen = 0; lastLen = 0; cPos = Math.max(cPos, pos); },
+      resetSession: function () { cBase = 0; lastLen = 0; basePos = pos; },
       // salto manual (toque en una palabra); puede ir hacia atrás
-      setPos: function (p) { pos = cPos = Math.max(0, Math.min(p, norms.length)); cSeen = lastLen; }
+      setPos: function (p) { pos = basePos = Math.max(0, Math.min(p, norms.length)); cBase = lastLen; }
     };
   }
 
