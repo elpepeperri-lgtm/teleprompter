@@ -141,7 +141,8 @@ window.Cam = (function () {
     return '';
   }
 
-  function startRecording(bitrate, fps) {
+  // onChunk(blob): si se entrega, cada trozo se pasa al llamador (que lo guarda en disco) y no se acumula en memoria.
+  function startRecording(bitrate, fps, onChunk) {
     if (!stream || !window.MediaRecorder) throw new Error('Grabación no disponible');
     var vs = canvas.captureStream(fps || 60);
     var tracks = vs.getVideoTracks().concat(stream.getAudioTracks());
@@ -150,8 +151,13 @@ window.Cam = (function () {
     if (recMime) opts.mimeType = recMime;
     recorder = new MediaRecorder(new MediaStream(tracks), opts);
     chunks = [];
-    recorder.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+    recorder.ondataavailable = function (e) {
+      if (!e.data || !e.data.size) return;
+      if (onChunk) onChunk(e.data); else chunks.push(e.data);
+    };
     recorder.start(1000);
+    var t = (recorder.mimeType || recMime || 'video/mp4').split(';')[0];
+    return { type: t, ext: t.indexOf('mp4') >= 0 ? 'mp4' : 'webm' };
   }
 
   function stopRecording() {
@@ -159,7 +165,7 @@ window.Cam = (function () {
       if (!recorder || recorder.state === 'inactive') return reject(new Error('No hay grabación'));
       recorder.onstop = function () {
         var type = (recorder.mimeType || recMime || 'video/mp4').split(';')[0];
-        var blob = new Blob(chunks, { type: type });
+        var blob = chunks.length ? new Blob(chunks, { type: type }) : null;   // null: los trozos ya se guardaron aparte
         recorder = null; chunks = [];
         resolve({ blob: blob, type: type, ext: type.indexOf('mp4') >= 0 ? 'mp4' : 'webm' });
       };
