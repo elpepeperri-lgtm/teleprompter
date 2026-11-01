@@ -42,12 +42,17 @@
         else if (type === 'elst' && mvTs) {
           var n = v.getUint32(b + 4), step = big ? 20 : 12;
           for (var i = 0; i < n && b + 8 + (i + 1) * step <= o + size; i++) {
-            var e = b + 8 + i * step;
-            setDur(e, big, mvTs);
-            if (rebase) {
-              var mt = big ? v.getInt32(e + 8) * 4294967296 + v.getUint32(e + 12) : v.getInt32(e + 4);
-              if (mt > 0) { if (big) put64(v, e + 8, 0); else v.setInt32(e + 4, 0); changed++; }
+            var e = b + 8 + i * step, mt = big ? v.getInt32(e + 8) * 4294967296 + v.getUint32(e + 12) : v.getInt32(e + 4);
+            if (mt === -1) {
+              // Edición vacía = espera antes de que empiece el video (se ve congelado). Darle la duración total
+              // duplicaba el video, así que se anula.
+              if ((big ? u64(v, e) : v.getUint32(e)) !== 0) { if (big) put64(v, e, 0); else v.setUint32(e, 0); changed++; }
+              continue;
             }
+            setDur(e, big, mvTs);
+            // Inicio muy desplazado (> 5 s en cualquier escala): ya se movieron los tiempos a 0. Uno pequeño
+            // (el relleno inicial del audio) se respeta para no desincronizar.
+            if (rebase && mt > 480000) { if (big) put64(v, e + 8, 0); else v.setInt32(e + 4, 0); changed++; }
           }
         }
         o += size;
@@ -245,5 +250,54 @@
       return { blob: build(blob, a, gr.frags, secs), seconds: secs };
     });
   }
-  return { fix: fix, patch: patch, split: split, normalize: normalize };
+  // Resumen técnico del archivo (pistas, escalas, duraciones, lista de ediciones y tiempos de los fragmentos).
+  async function describe(blob) {
+    var lines = [], init, a = null;
+    try { a = await analyze(blob); } catch (e) {}
+    if (a) init = a.init; else init = await readBytes(blob, 0, Math.min(blob.size, HEAD));
+    var u = init, v = dv(u);
+    function dur(b, big, off0, off1) { return big ? u64(v, b + off1) : v.getUint32(b + off0); }
+    children(u, v, 0, u.length, function (t, b, e) {
+      if (t === 'ftyp') lines.push('ftyp ' + typeAt(u, b - 4));   // marca principal
+      if (t !== 'moov') return;
+      children(u, v, b, e, function (t2, b2, e2) {
+        var big = u[b2] === 1;
+        if (t2 === 'mvhd') lines.push('mvhd v' + u[b2] + ' ts=' + v.getUint32(b2 + (big ? 20 : 12)) + ' dur=' + dur(b2, big, 16, 24));
+        else if (t2 === 'mvex') children(u, v, b2, e2, function (t3, b3) { if (t3 === 'mehd') lines.push('mehd dur=' + dur(b3, u[b3] === 1, 4, 4)); });
+        else if (t2 === 'trak') {
+          var parts = [];
+          children(u, v, b2, e2, function (t3, b3, e3) {
+            var bg = u[b3] === 1;
+            if (t3 === 'tkhd') parts.push('id=' + v.getUint32(b3 + (bg ? 20 : 12)) + ' tkhd.dur=' + dur(b3, bg, 20, 28));
+            else if (t3 === 'edts') children(u, v, b3, e3, function (t4, b4) {
+              if (t4 !== 'elst') return;
+              var bb = u[b4] === 1, n = v.getUint32(b4 + 4), st = bb ? 20 : 12, en = [];
+              for (var i = 0; i < n && i < 4; i++) {
+                var o = b4 + 8 + i * st;
+                en.push((bb ? u64(v, o) : v.getUint32(o)) + '@' + (bb ? v.getInt32(o + 8) * 4294967296 + v.getUint32(o + 12) : v.getInt32(o + 4)));
+              }
+              parts.push('elst[' + en.join(', ') + ']');
+            });
+            else if (t3 === 'mdia') children(u, v, b3, e3, function (t4, b4) {
+              var b5 = u[b4] === 1;
+              if (t4 === 'mdhd') parts.push('mdhd ts=' + v.getUint32(b4 + (b5 ? 20 : 12)) + ' dur=' + dur(b4, b5, 16, 24));
+              else if (t4 === 'hdlr') parts.push(typeAt(u, b4 + 4));
+            });
+          });
+          lines.push('trak ' + parts.join(' '));
+        }
+      });
+    });
+    if (a) {
+      var f0 = a.frags[0], fl = a.frags[a.frags.length - 1], syncs = a.frags.filter(function (f) { return f.sync; }).length;
+      lines.push('fragmentos=' + a.frags.length + ' clave=' + syncs);
+      [f0, fl].forEach(function (f, k) {
+        lines.push((k ? 'último' : 'primero') + ': ' + f.trafs.map(function (t) { return 'pista' + t.id + ' tfdt=' + t.t; }).join(' '));
+      });
+    } else lines.push('no fragmentado');
+    lines.push('tamaño=' + Math.round(blob.size / 1048576) + ' MB');
+    return lines.join('\n');
+  }
+
+  return { fix: fix, patch: patch, split: split, normalize: normalize, describe: describe };
 });
