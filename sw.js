@@ -1,4 +1,4 @@
-﻿const CACHE = 'teleprompter-v16';
+﻿const CACHE = 'teleprompter-v17';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'tracker.js', 'store.js', 'camera.js', 'mp4fix.js', 'vosk-engine.js',
   'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png'];
 
