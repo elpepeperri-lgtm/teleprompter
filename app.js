@@ -544,8 +544,7 @@
   $('#bRec').addEventListener('click', async function () {
     if (!T.camOk) { $('#startOv').hidden = false; return; }
     if (!T.recording) {
-      // Bitrates moderados: suficiente para una toma de cara a cámara y archivos que iOS puede manejar (~38 MB/min en 1080p30).
-      var br = (S.camera.res === '4k' ? 14e6 : S.camera.res === '720' ? 3e6 : 5e6) * (S.camera.fps >= 60 ? 1.4 : 1), seq = 0, onChunk = null;
+      var br = bitrate(), seq = 0, onChunk = null;
       T.chunkErr = false; T.pending = Promise.resolve(); T.meta = null;
       try { await VDB.open(); onChunk = function (b) { var n = seq++; T.pending = T.pending.then(function () { return VDB.chunk(n, b); }).catch(function () { T.chunkErr = true; }); }; }
       catch (e) { onChunk = null; }
@@ -590,9 +589,12 @@
     $('#timer').textContent = '00:00:00';
   }
 
-  /* iOS cierra la página si tiene que leer entero un video de cientos de MB (al compartirlo o al reproducirlo).
-     Por eso la vista previa muestra una miniatura, y los videos grandes se guardan en partes de tamaño seguro. */
-  var SHARE_MAX = 90 * 1048576, PLAY_MAX = 80 * 1048576;
+  /* iOS puede cerrar la página si tiene que cargar entero un video de cientos de MB (al reproducirlo o al compartirlo).
+     La vista previa muestra una miniatura y el video se guarda como un solo archivo; si iOS cerró la app al guardar,
+     al volver se detecta y se ofrece descargarlo completo a Archivos. */
+  var SHARE_MAX = 90 * 1048576, PLAY_MAX = 80 * 1048576, K_SHARING = 'tp.sharing';
+  T.shareCrashed = 0;
+  try { var sh = localStorage.getItem(K_SHARING); if (sh) { T.shareCrashed = +sh || 1; localStorage.removeItem(K_SHARING); } } catch (e) {}
   if (DEMO) { var qmax = /[?&]maxkb=(\d+)/.exec(location.search); if (qmax) SHARE_MAX = PLAY_MAX = +qmax[1] * 1024; }   // pruebas: forzar la división
   function mb(n) { return Math.max(1, Math.round(n / 1048576)) + ' MB'; }
   function fmtDur(ms) { var s = Math.round(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
@@ -603,13 +605,14 @@
   function unloadPlayer() { var el = $('#pvVid'); el.pause(); el.removeAttribute('src'); el.load(); el.hidden = true; }
 
   function showPreview(isReview) {
-    var v = T.lastVideo, big = v.blob.size > SHARE_MAX;
+    var v = T.lastVideo, crashed = T.shareCrashed > 0;
     unloadPlayer();
     var th = $('#pvThumb'); th.hidden = !v.thumb; if (v.thumb) th.src = v.thumb;
     $('#pvPlay').hidden = v.blob.size > PLAY_MAX;
     $('#pvInfo').textContent = (v.dur ? fmtDur(v.dur) + ' · ' : '') + mb(v.blob.size) +
-      (big ? ' · por su tamaño se guarda en ' + Math.ceil(v.blob.size / SHARE_MAX) + ' partes o más (misma calidad)' : '');
-    $('#pvSave').textContent = big ? 'Guardar en Fotos (en partes)' : 'Guardar en Fotos';
+      (crashed ? ' · La última vez iOS cerró la app al guardar. Usa “Descargar a Archivos” (un solo archivo, misma calidad).' : '');
+    $('#pvSave').textContent = 'Guardar en Fotos';
+    $('#pvSplit').hidden = !crashed;
     $('#pvParts').hidden = true; $('#pvParts').innerHTML = '';
     $('#preview').hidden = false;
     $('#pvDiscard').hidden = isReview; $('#pvClose').hidden = !isReview;
@@ -649,22 +652,22 @@
   async function shareBlob(blob, name) {
     var file = new File([blob], name, { type: T.lastVideo.type });
     if (!(navigator.canShare && navigator.canShare({ files: [file] }))) return 'unsupported';
+    // Marca: si iOS cierra la página mientras prepara el archivo, al volver se sabe y se ofrece otra vía.
+    try { localStorage.setItem(K_SHARING, String(blob.size)); } catch (e) {}
     try { await navigator.share({ files: [file] }); return 'ok'; }
     catch (e) { return e.name === 'AbortError' ? 'cancel' : (e.name || 'error'); }
+    finally { try { localStorage.removeItem(K_SHARING); } catch (e) {} }
   }
 
   async function saveVideo(auto) {
     var v = T.lastVideo; if (!v) return;
+    if (auto && v.blob.size > SHARE_MAX) { UI.toast('Toca “Guardar en Fotos” para guardar el video'); return; }
     freeMemory(); unloadPlayer();
-    if (v.blob.size <= SHARE_MAX) {
-      var r = await shareBlob(v.blob, videoName());
-      if (r === 'ok' || r === 'cancel') return;
-      if (auto) { UI.toast('Toca “Guardar en Fotos” para guardarlo'); return; }   // iOS pide un toque del usuario
-      UI.toast('No se pudo abrir “Guardar” (' + r + '). Prueba “Descargar a Archivos”.');
-      return;
-    }
-    if (auto) { UI.toast('Video grande: toca “Guardar en Fotos” para guardarlo en partes'); return; }
-    await showParts();
+    var r = await shareBlob(v.blob, videoName());
+    if (r === 'ok') { T.shareCrashed = 0; return; }
+    if (r === 'cancel') return;
+    if (auto) { UI.toast('Toca “Guardar en Fotos” para guardarlo'); return; }   // iOS pide un toque del usuario
+    UI.toast('No se pudo abrir “Guardar” (' + r + '). Prueba “Descargar a Archivos”.');
   }
 
   // Divide el MP4 sin recomprimir y muestra un botón por parte (iOS exige un toque para cada “Guardar”).
@@ -701,7 +704,8 @@
     UI.info('Descargando video', 'Queda en la app Archivos › Descargas (' + mb(v.blob.size) + '). Ábrelo ahí, toca Compartir y elige “Guardar video” para pasarlo a Fotos.');
   }
   $('#pvSave').addEventListener('click', function () { saveVideo(false); });
-  $('#pvDown').addEventListener('click', downloadVideo);  // Aviso en la pantalla de inicio mientras haya un video grabado sin descartar.
+  $('#pvDown').addEventListener('click', downloadVideo);
+  $('#pvSplit').addEventListener('click', function () { freeMemory(); unloadPlayer(); showParts(); });  // Aviso en la pantalla de inicio mientras haya un video grabado sin descartar.
   function updateLast() { $('#btnLast').hidden = !T.lastVideo; }
   $('#btnLast').addEventListener('click', function () { if (T.lastVideo) showPreview(true); });
 
@@ -744,6 +748,7 @@
       o.blob = await Mp4Fix.fix(o.blob, dur);
       T.lastVideo = { blob: o.blob, ext: o.meta.ext, type: o.meta.type, url: URL.createObjectURL(o.blob), dur: dur, thumb: o.meta.thumb };
       updateLast();
+      if (T.shareCrashed) return UI.info('Tu video está a salvo', 'iOS cerró la app mientras preparaba “Guardar en Fotos” (' + mb(o.blob.size) + '). Toca “Video sin guardar” y usa “Descargar a Archivos”: es el mismo archivo completo, en la misma calidad.');
       UI.toast(o.meta.done ? 'Tienes un video sin exportar: botón de descarga en el teleprompter' : 'Se recuperó una grabación interrumpida: botón de descarga en el teleprompter');
     }).catch(function () {});
   } catch (e) {}  $('#bDown').addEventListener('click', function () {
@@ -791,11 +796,33 @@
 
   /* ---------- hojas: cámara ---------- */
   function segSet(sel, val) { $$(sel + ' button').forEach(function (b) { b.classList.toggle('on', b.dataset.v === String(val)); }); }
+  // Calidad de grabación (Mbps a 30 / 60 fps). "Máxima" se parece a lo que graba la cámara del iPhone en H.264.
+  var QUALITY = {
+    max:  { '720': [8, 12], '1080': [16, 24], '4k': [45, 65] },
+    high: { '720': [5, 7],  '1080': [10, 14], '4k': [28, 40] },
+    lite: { '720': [3, 4],  '1080': [5, 7],   '4k': [14, 20] }
+  };
+  function bitrate() {
+    var q = QUALITY[S.camera.quality] || QUALITY.max, r = q[S.camera.res] || q['1080'];
+    return r[S.camera.fps >= 60 ? 1 : 0] * 1e6;
+  }
+  function qualityHint() {
+    var el = $('#qualityHint'); if (!el) return;
+    el.textContent = '≈ ' + Math.round(bitrate() * 60 / 8 / 1048576 + 1.4) + ' MB por minuto';
+  }
+  $$('#cQuality button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      if (T.recording) return UI.toast('Detén la grabación para cambiar la calidad');
+      S.camera.quality = b.dataset.v; Store.saveSettings(); segSet('#cQuality', b.dataset.v); qualityHint();
+    });
+  });
+
   function refreshCamUI() {
     var c = S.camera;
+    qualityHint();
     $('#cMirror').checked = c.mirror; $('#cGrid').checked = c.grid; $('#cHdr').checked = c.hdr;
     $('#rowHdr').hidden = !(window.matchMedia && matchMedia('(dynamic-range: high)').matches);
-    segSet('#cRes', c.res); segSet('#cFps', c.fps); segSet('#cBlur', c.blur ? 1 : 0);
+    segSet('#cRes', c.res); segSet('#cFps', c.fps); segSet('#cQuality', c.quality); segSet('#cBlur', c.blur ? 1 : 0);
     $('#cZoom').value = c.zoom; $('#zoomVal').textContent = c.zoom.toFixed(1) + '×';
     var max = T.camInfo ? T.camInfo.max : 0;
     $('#cRes [data-v="4k"]').disabled = !DEMO && max > 0 && max < 3840;
@@ -846,7 +873,7 @@
     b.addEventListener('click', async function () {
       if (S.camera.fps === +b.dataset.v) return;
       if (T.recording) return UI.toast('Detén la grabación para cambiar los fps');
-      S.camera.fps = +b.dataset.v; Store.saveSettings(); segSet('#cFps', b.dataset.v);
+      S.camera.fps = +b.dataset.v; Store.saveSettings(); segSet('#cFps', b.dataset.v); qualityHint();
       await restartCamera(); refreshCamUI();
       var got = T.camInfo && T.camInfo.settings && T.camInfo.settings.frameRate;
       if (got && Math.round(got) < S.camera.fps - 2) UI.toast('Tu cámara entrega ' + Math.round(got) + ' fps en esta resolución');
