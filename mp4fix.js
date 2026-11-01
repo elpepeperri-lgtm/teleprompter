@@ -15,7 +15,8 @@
 
   // bytes: Uint8Array con el inicio del archivo; seconds: duración real. Devuelve cuántos campos cambió.
   // force: reescribir aunque el valor actual parezca válido (al dividir en partes).
-  function patch(bytes, seconds, force) {
+  // rebase: los tiempos ya se movieron a 0, así que un inicio positivo en la lista de ediciones (elst) se anula.
+  function patch(bytes, seconds, force, rebase) {
     var v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), changed = 0, mvTs = 0, mdTs = 0;
 
     function bad(cur, ts) { return force || cur === 0 || cur > (seconds + 10) * ts; }
@@ -40,7 +41,14 @@
         else if (type === 'mehd') { if (mvTs) setDur(b + 4, big, mvTs); }
         else if (type === 'elst' && mvTs) {
           var n = v.getUint32(b + 4), step = big ? 20 : 12;
-          for (var i = 0; i < n && b + 8 + (i + 1) * step <= o + size; i++) setDur(b + 8 + i * step, big, mvTs);
+          for (var i = 0; i < n && b + 8 + (i + 1) * step <= o + size; i++) {
+            var e = b + 8 + i * step;
+            setDur(e, big, mvTs);
+            if (rebase) {
+              var mt = big ? v.getInt32(e + 8) * 4294967296 + v.getUint32(e + 12) : v.getInt32(e + 4);
+              if (mt > 0) { if (big) put64(v, e + 8, 0); else v.setInt32(e + 4, 0); changed++; }
+            }
+          }
         }
         o += size;
       }
@@ -50,9 +58,11 @@
   }
 
   // blob: video/mp4 grabado; ms: duración real en milisegundos. Devuelve el blob corregido (o el mismo si no hace falta).
+  // Si es fragmentado (lo normal en MediaRecorder) también mueve los tiempos para que empiece en 0.
   async function fix(blob, ms) {
     try {
       if (!blob || !/mp4/.test(blob.type) || !(ms > 500)) return blob;
+      try { var nb = await normalize(blob, ms); if (nb) return nb; } catch (e) {}
       var n = Math.min(blob.size, HEAD), head = new Uint8Array(await blob.slice(0, n).arrayBuffer());
       if (!patch(head, ms / 1000)) return blob;
       return new Blob([head, blob.slice(n)], { type: blob.type });
@@ -148,9 +158,8 @@
     return trafs;
   }
 
-  // blob: MP4 completo; maxBytes: tamaño máximo de cada parte; totalMs: duración total.
-  // Devuelve [{blob, seconds}] o null si el archivo no es un MP4 fragmentado.
-  async function split(blob, maxBytes, totalMs) {
+  // Lee el encabezado y la cabecera (moof) de cada fragmento; el contenido (mdat) no se carga.
+  async function analyze(blob) {
     var boxes = await topBoxes(blob), first = -1, i;
     for (i = 0; i < boxes.length; i++) if (boxes[i].type === 'moof') { first = i; break; }
     if (first < 0) return null;
@@ -168,51 +177,73 @@
     while (frags.length && !frags[frags.length - 1].rest.some(function (b) { return b.type === 'mdat'; })) frags.pop();
     if (!frags.length) return null;
 
+    // Primer tiempo de cada pista. Safari puede numerar desde que se encendió la cámara (no desde que empezó
+    // la grabación); por eso cada pista se mueve para que empiece en 0.
+    var trackBase = {};
     for (i = 0; i < frags.length; i++) {
       var f = frags[i];
       f.bytes = await readBytes(blob, f.o, f.o + f.moof);
       f.trafs = parseMoof(f.bytes);
+      f.trafs.forEach(function (t) { if (t.t !== undefined && trackBase[t.id] === undefined) trackBase[t.id] = t.t; });
       var tv = f.trafs.filter(function (t) { return t.id === vid; })[0], fl;
       if (tv) fl = tv.first !== undefined ? tv.first : tv.defFlags !== undefined ? tv.defFlags : info.tracks[vid].defFlags;
       f.sync = vid === null ? true : !tv ? false : fl === undefined ? true : !((fl >> 16) & 1);
-      f.time = null;   // inicio del fragmento en segundos (el más temprano de sus pistas)
-      f.trafs.forEach(function (t) {
+    }
+    frags.forEach(function (fr) {   // inicio relativo del fragmento, en segundos
+      fr.time = null;
+      fr.trafs.forEach(function (t) {
         var ts = (info.tracks[t.id] || {}).ts;
-        if (t.t !== undefined && ts) { var s = t.t / ts; if (f.time === null || s < f.time) f.time = s; }
+        if (t.t !== undefined && ts) { var s = (t.t - trackBase[t.id]) / ts; if (fr.time === null || s < fr.time) fr.time = s; }
       });
-    }
-
-    var groups = [], cur = null;
-    frags.forEach(function (fr) {
-      if (!cur || (cur.size + fr.size > maxBytes && fr.sync && cur.frags.length)) { cur = { frags: [], size: init.length }; groups.push(cur); }
-      cur.frags.push(fr); cur.size += fr.size;
+      if (fr.time === null) fr.time = 0;
     });
-
-    var out = [], total = totalMs ? totalMs / 1000 : null;
-    for (var g = 0; g < groups.length; g++) {
-      var gr = groups[g], base = gr.frags[0].time || 0, pos = init.length, pieces = [];
-      var nextT = groups[g + 1] ? groups[g + 1].frags[0].time : total;
-      var secs = nextT != null ? Math.max(0.5, nextT - base) : null;
-      var head = init.slice(); if (secs) patch(head, secs, true);
-      pieces.push(head);
-      gr.frags.forEach(function (fr) {
-        var m = fr.bytes.slice(), mv = dv(m);
-        fr.trafs.forEach(function (t) {
-          var ts = (info.tracks[t.id] || {}).ts;
-          if (t.tPos !== undefined && ts) {                         // mismo desplazamiento para todas las pistas: audio y video siguen sincronizados
-            var nt = Math.max(0, t.t - Math.round(base * ts));
-            if (t.big) put64(mv, t.tPos, nt); else mv.setUint32(t.tPos, nt);
-          }
-          if (t.bdoPos !== undefined) put64(mv, t.bdoPos, u64(mv, t.bdoPos) - (fr.o - pos));
-        });
-        pieces.push(m);
-        fr.rest.forEach(function (b) { pieces.push(blob.slice(b.o, b.o + b.size)); });
-        pos += fr.size;
-      });
-      out.push({ blob: new Blob(pieces, { type: blob.type }), seconds: secs });
-    }
-    return out;
+    return { init: init, info: info, frags: frags, trackBase: trackBase };
   }
 
-  return { fix: fix, patch: patch, split: split };
+  // Arma un archivo con un grupo de fragmentos que empieza en el segundo 0 y dura `secs`.
+  function build(blob, a, frags, secs) {
+    var base = frags[0].time, pos = a.init.length, head = a.init.slice(), pieces = [head];
+    if (secs) patch(head, secs, true, true);
+    frags.forEach(function (fr) {
+      var m = fr.bytes.slice(), mv = dv(m);
+      fr.trafs.forEach(function (t) {
+        var ts = (a.info.tracks[t.id] || {}).ts;
+        if (t.tPos !== undefined && ts) {
+          var nt = Math.max(0, t.t - a.trackBase[t.id] - Math.round(base * ts));
+          if (t.big) put64(mv, t.tPos, nt); else mv.setUint32(t.tPos, nt);
+        }
+        if (t.bdoPos !== undefined) put64(mv, t.bdoPos, u64(mv, t.bdoPos) - (fr.o - pos));
+      });
+      pieces.push(m);
+      fr.rest.forEach(function (b) { pieces.push(blob.slice(b.o, b.o + b.size)); });
+      pos += fr.size;
+    });
+    return new Blob(pieces, { type: blob.type });
+  }
+
+  // Video completo con los tiempos empezando en 0 y la duración real. null si no es un MP4 fragmentado.
+  async function normalize(blob, ms) {
+    var a = await analyze(blob);
+    if (!a) return null;
+    return build(blob, a, a.frags, ms > 500 ? ms / 1000 : null);
+  }
+
+  // blob: MP4 completo; maxBytes: tamaño máximo de cada parte; totalMs: duración total.
+  // Devuelve [{blob, seconds}] o null si el archivo no es un MP4 fragmentado.
+  async function split(blob, maxBytes, totalMs) {
+    var a = await analyze(blob);
+    if (!a) return null;
+    var groups = [], cur = null;
+    a.frags.forEach(function (fr) {
+      if (!cur || (cur.size + fr.size > maxBytes && fr.sync && cur.frags.length)) { cur = { frags: [], size: a.init.length }; groups.push(cur); }
+      cur.frags.push(fr); cur.size += fr.size;
+    });
+    var total = totalMs ? totalMs / 1000 : null;
+    return groups.map(function (gr, g) {
+      var start = gr.frags[0].time, next = groups[g + 1] ? groups[g + 1].frags[0].time : total;
+      var secs = next != null ? Math.max(0.5, next - start) : null;
+      return { blob: build(blob, a, gr.frags, secs), seconds: secs };
+    });
+  }
+  return { fix: fix, patch: patch, split: split, normalize: normalize };
 });
