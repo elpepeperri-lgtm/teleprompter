@@ -158,7 +158,7 @@
   function downloadBlob(blob, name) {
     var url = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 300000);   // un video grande tarda en descargarse
   }
 
   /* ================= editor ================= */
@@ -544,13 +544,14 @@
   $('#bRec').addEventListener('click', async function () {
     if (!T.camOk) { $('#startOv').hidden = false; return; }
     if (!T.recording) {
-      var br = (S.camera.res === '4k' ? 25e6 : S.camera.res === '720' ? 5e6 : 9e6) * (S.camera.fps >= 60 ? 1.2 : 1), seq = 0, onChunk = null;
+      // Bitrates moderados: suficiente para una toma de cara a cámara y archivos que iOS puede manejar (~38 MB/min en 1080p30).
+      var br = (S.camera.res === '4k' ? 14e6 : S.camera.res === '720' ? 3e6 : 5e6) * (S.camera.fps >= 60 ? 1.4 : 1), seq = 0, onChunk = null;
       T.chunkErr = false; T.pending = Promise.resolve(); T.meta = null;
       try { await VDB.open(); onChunk = function (b) { var n = seq++; T.pending = T.pending.then(function () { return VDB.chunk(n, b); }).catch(function () { T.chunkErr = true; }); }; }
       catch (e) { onChunk = null; }
       try {
         var info = Cam.startRecording(br, S.camera.fps, onChunk);
-        T.meta = { type: info.type, ext: info.ext, done: false, dur: 0 };
+        T.meta = { type: info.type, ext: info.ext, done: false, dur: 0, thumb: Cam.thumb() };
         if (onChunk) { T.pending = VDB.begin(T.meta).catch(function () { T.chunkErr = true; }); }
       }
       catch (e) { return UI.info('No se puede grabar', 'Este navegador no admite grabación de video (MediaRecorder).'); }
@@ -581,7 +582,7 @@
       }
       r.blob = await Mp4Fix.fix(r.blob, dur);   // Safari deja una duración absurda en el encabezado del MP4
       if (T.lastVideo) URL.revokeObjectURL(T.lastVideo.url);
-      T.lastVideo = { blob: r.blob, ext: r.ext, type: r.type, url: URL.createObjectURL(r.blob), dur: dur };
+      T.lastVideo = { blob: r.blob, ext: r.ext, type: r.type, url: URL.createObjectURL(r.blob), dur: dur, thumb: T.meta && T.meta.thumb };
       freeMemory();   // sin cámara ni motor de voz cargados, iOS tiene memoria para guardar el archivo
       showPreview(false); updateLast();
       saveVideo(true);   // abre “Guardar video” de inmediato; si iOS lo bloquea, queda el botón
@@ -589,12 +590,35 @@
     $('#timer').textContent = '00:00:00';
   }
 
+  /* iOS cierra la página si tiene que leer entero un video de cientos de MB (al compartirlo o al reproducirlo).
+     Por eso la vista previa muestra una miniatura, y los videos grandes se guardan en partes de tamaño seguro. */
+  var SHARE_MAX = 90 * 1048576, PLAY_MAX = 80 * 1048576;
+  if (DEMO) { var qmax = /[?&]maxkb=(\d+)/.exec(location.search); if (qmax) SHARE_MAX = PLAY_MAX = +qmax[1] * 1024; }   // pruebas: forzar la división
+  function mb(n) { return Math.max(1, Math.round(n / 1048576)) + ' MB'; }
+  function fmtDur(ms) { var s = Math.round(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }
+  function videoName(suffix) {
+    var stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+    return 'teleprompter-' + stamp + (suffix || '') + '.' + T.lastVideo.ext;
+  }
+  function unloadPlayer() { var el = $('#pvVid'); el.pause(); el.removeAttribute('src'); el.load(); el.hidden = true; }
+
   function showPreview(isReview) {
-    var v = T.lastVideo, pv = $('#preview'), el = $('#pvVid');
-    el.src = v.url; pv.hidden = false;
+    var v = T.lastVideo, big = v.blob.size > SHARE_MAX;
+    unloadPlayer();
+    var th = $('#pvThumb'); th.hidden = !v.thumb; if (v.thumb) th.src = v.thumb;
+    $('#pvPlay').hidden = v.blob.size > PLAY_MAX;
+    $('#pvInfo').textContent = (v.dur ? fmtDur(v.dur) + ' · ' : '') + mb(v.blob.size) +
+      (big ? ' · por su tamaño se guarda en ' + Math.ceil(v.blob.size / SHARE_MAX) + ' partes o más (misma calidad)' : '');
+    $('#pvSave').textContent = big ? 'Guardar en Fotos (en partes)' : 'Guardar en Fotos';
+    $('#pvParts').hidden = true; $('#pvParts').innerHTML = '';
+    $('#preview').hidden = false;
     $('#pvDiscard').hidden = isReview; $('#pvClose').hidden = !isReview;
     disarmDiscard();
   }
+  $('#pvPlay').addEventListener('click', function () {
+    var el = $('#pvVid'); this.hidden = true; $('#pvThumb').hidden = true;
+    el.hidden = false; el.src = T.lastVideo.url; el.play().catch(function () {});
+  });
   // Libera cámara, motor de voz y medidor de audio. La cámara vuelve sola al cerrar la vista previa.
   function freeMemory() {
     T.rehearsing = false; stopSpeech(); syncScrollEngines();
@@ -603,7 +627,7 @@
     Cam.stop(); T.camOk = false;
   }
   function closePreview() {
-    var el = $('#pvVid'); el.pause(); el.removeAttribute('src'); el.load(); $('#preview').hidden = true;
+    unloadPlayer(); $('#preview').hidden = true;
     if (current === 'tele' && !T.camOk) startCamera();
   }
   $('#pvClose').addEventListener('click', closePreview);
@@ -620,27 +644,64 @@
     if (T.lastVideo) URL.revokeObjectURL(T.lastVideo.url);
     T.lastVideo = null; VDB.clear(); updateLast(); UI.toast('Video descartado');
   });
+
+  // Abre la hoja de iOS para guardar un archivo. Devuelve 'ok', 'cancel' o el nombre del error.
+  async function shareBlob(blob, name) {
+    var file = new File([blob], name, { type: T.lastVideo.type });
+    if (!(navigator.canShare && navigator.canShare({ files: [file] }))) return 'unsupported';
+    try { await navigator.share({ files: [file] }); return 'ok'; }
+    catch (e) { return e.name === 'AbortError' ? 'cancel' : (e.name || 'error'); }
+  }
+
   async function saveVideo(auto) {
     var v = T.lastVideo; if (!v) return;
-    freeMemory();
-    var pv = $('#pvVid'); pv.pause(); pv.removeAttribute('src'); pv.load();   // el video de la vista previa ocupa memoria mientras iOS prepara el archivo
-    var d = new Date(), stamp = d.toISOString().slice(0, 16).replace(/[-:T]/g, '');
-    var file = new File([v.blob], 'teleprompter-' + stamp + '.' + v.ext, { type: v.type });
-    var restore = function () { if (!$('#preview').hidden && !pv.getAttribute('src') && T.lastVideo) pv.src = T.lastVideo.url; };
-    try {
-      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); restore(); return; }
-    } catch (e) {
-      restore();
-      if (e.name === 'AbortError') return;
+    freeMemory(); unloadPlayer();
+    if (v.blob.size <= SHARE_MAX) {
+      var r = await shareBlob(v.blob, videoName());
+      if (r === 'ok' || r === 'cancel') return;
       if (auto) { UI.toast('Toca “Guardar en Fotos” para guardarlo'); return; }   // iOS pide un toque del usuario
-      UI.toast('No se pudo abrir “Compartir” (' + (e.name || 'error') + '). Descargando…');
+      UI.toast('No se pudo abrir “Guardar” (' + r + '). Prueba “Descargar a Archivos”.');
+      return;
     }
-    restore();
-    if (auto) return;
-    downloadBlob(v.blob, file.name); UI.toast('Video descargado (' + Math.round(v.blob.size / 1048576) + ' MB)');
+    if (auto) { UI.toast('Video grande: toca “Guardar en Fotos” para guardarlo en partes'); return; }
+    await showParts();
+  }
+
+  // Divide el MP4 sin recomprimir y muestra un botón por parte (iOS exige un toque para cada “Guardar”).
+  async function showParts() {
+    var v = T.lastVideo, box = $('#pvParts');
+    if (!v.parts) {
+      UI.toast('Preparando partes…');
+      try { v.parts = await Mp4Fix.split(v.blob, SHARE_MAX, v.dur); } catch (e) { v.parts = null; }
+    }
+    if (!v.parts || v.parts.length < 2) {
+      var ok = await UI.confirm('Video muy grande', 'Pesa ' + mb(v.blob.size) + ' y no se pudo dividir. iOS puede cerrar la app al guardarlo en Fotos. ¿Descargarlo a Archivos?', 'Descargar');
+      if (ok) downloadVideo();
+      return;
+    }
+    box.innerHTML = '';
+    v.parts.forEach(function (p, i) {
+      var b = document.createElement('button'), label = 'Guardar parte ' + (i + 1) + ' de ' + v.parts.length + (p.seconds ? ' · ' + fmtDur(p.seconds * 1000) : '') + ' · ' + mb(p.blob.size);
+      b.textContent = (p.saved ? '✓ ' : '') + label; b.classList.toggle('done', !!p.saved);
+      b.onclick = async function () {
+        var r = await shareBlob(p.blob, videoName('-parte' + (i + 1)));
+        if (r === 'ok') { p.saved = true; b.textContent = '✓ ' + label; b.classList.add('done'); }
+        else if (r !== 'cancel') UI.toast('No se pudo guardar la parte ' + (i + 1) + ' (' + r + ')');
+      };
+      box.appendChild(b);
+    });
+    box.hidden = false;
+    $('#pvInfo').textContent = 'Toca cada parte y elige “Guardar video”. Se guardan en orden en Fotos, con la misma calidad.';
+  }
+
+  function downloadVideo() {
+    var v = T.lastVideo; if (!v) return;
+    freeMemory(); unloadPlayer();
+    downloadBlob(v.blob, videoName());
+    UI.info('Descargando video', 'Queda en la app Archivos › Descargas (' + mb(v.blob.size) + '). Ábrelo ahí, toca Compartir y elige “Guardar video” para pasarlo a Fotos.');
   }
   $('#pvSave').addEventListener('click', function () { saveVideo(false); });
-  // Aviso en la pantalla de inicio mientras haya un video grabado sin descartar.
+  $('#pvDown').addEventListener('click', downloadVideo);  // Aviso en la pantalla de inicio mientras haya un video grabado sin descartar.
   function updateLast() { $('#btnLast').hidden = !T.lastVideo; }
   $('#btnLast').addEventListener('click', function () { if (T.lastVideo) showPreview(true); });
 
@@ -681,7 +742,7 @@
       if (!o || T.lastVideo) return;
       var dur = o.meta.dur || o.n * 1000;   // sin duración guardada (grabación interrumpida): un trozo ≈ 1 s
       o.blob = await Mp4Fix.fix(o.blob, dur);
-      T.lastVideo = { blob: o.blob, ext: o.meta.ext, type: o.meta.type, url: URL.createObjectURL(o.blob), dur: dur };
+      T.lastVideo = { blob: o.blob, ext: o.meta.ext, type: o.meta.type, url: URL.createObjectURL(o.blob), dur: dur, thumb: o.meta.thumb };
       updateLast();
       UI.toast(o.meta.done ? 'Tienes un video sin exportar: botón de descarga en el teleprompter' : 'Se recuperó una grabación interrumpida: botón de descarga en el teleprompter');
     }).catch(function () {});
