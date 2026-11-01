@@ -1,0 +1,2 @@
+# GitHub Pages: solo se publica la app web
+exclude: [ios, tools, tests, '*.tar.gz']

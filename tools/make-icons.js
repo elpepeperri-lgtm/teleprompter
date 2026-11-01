@@ -59,3 +59,8 @@ for (const [name, size] of [['icon-192.png', 192], ['icon-512.png', 512], ['appl
   fs.writeFileSync(path.join(out, name), png(size, size, (u, v) => pixel(u, v, size)));
   console.log('icons/' + name);
 }
+// Ícono de la app nativa de iPhone (iOS pide uno de 1024×1024)
+const ios = path.join(__dirname, '..', 'ios', 'Sources', 'Assets.xcassets', 'AppIcon.appiconset');
+fs.mkdirSync(ios, { recursive: true });
+fs.writeFileSync(path.join(ios, 'icon-1024.png'), png(1024, 1024, (u, v) => pixel(u, v, 1024)));
+console.log('ios/.../icon-1024.png');

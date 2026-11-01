@@ -1,0 +1,54 @@
+# Compila la app de iPhone en una Mac de GitHub y publica el .ipa (sin firmar; se firma al instalar con Sideloadly).
+name: App iPhone
+
+on:
+  push:
+    paths: ['ios/**', '.github/workflows/ios.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versión de Xcode
+        run: xcodebuild -version
+
+      - name: Generar proyecto
+        working-directory: ios
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Compilar
+        working-directory: ios
+        run: |
+          xcodebuild -project Teleprompter.xcodeproj -target Teleprompter -configuration Release -sdk iphoneos \
+            SYMROOT="$PWD/build" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > build.log 2>&1 \
+            || { grep -E "error:|Error:|fatal" build.log | head -80; tail -40 build.log; exit 1; }
+          grep -E "warning:" build.log | grep -v "deprecated" | head -40 || true
+          test -d build/Release-iphoneos/Teleprompter.app
+
+      - name: Empaquetar .ipa
+        working-directory: ios
+        run: |
+          mkdir -p Payload
+          cp -R build/Release-iphoneos/Teleprompter.app Payload/
+          zip -qry Teleprompter.ipa Payload
+          ls -lh Teleprompter.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Teleprompter-ipa
+          path: ios/Teleprompter.ipa
+
+      - name: Publicar en Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view ios-latest >/dev/null 2>&1 || gh release create ios-latest --title "Teleprompter para iPhone" --notes "Descarga Teleprompter.ipa e instálalo con Sideloadly."
+          gh release upload ios-latest ios/Teleprompter.ipa --clobber
