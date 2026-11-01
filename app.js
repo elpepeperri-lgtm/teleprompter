@@ -579,6 +579,7 @@
         if (!o) throw new Error('La grabación quedó vacía');
         r = { blob: o.blob, ext: T.meta.ext, type: T.meta.type };
       }
+      r.blob = await Mp4Fix.fix(r.blob, dur);   // Safari deja una duración absurda en el encabezado del MP4
       if (T.lastVideo) URL.revokeObjectURL(T.lastVideo.url);
       T.lastVideo = { blob: r.blob, ext: r.ext, type: r.type, url: URL.createObjectURL(r.blob), dur: dur };
       freeMemory();   // sin cámara ni motor de voz cargados, iOS tiene memoria para guardar el archivo
@@ -670,15 +671,17 @@
       var db = await VDB.open();
       return new Promise(function (res, rej) {
         var t = db.transaction(['v', 'c']), m = t.objectStore('v').get('meta'), c = t.objectStore('c').getAll();
-        t.oncomplete = function () { res(m.result && c.result && c.result.length ? { meta: m.result, blob: new Blob(c.result, { type: m.result.type }) } : null); };
+        t.oncomplete = function () { res(m.result && c.result && c.result.length ? { meta: m.result, n: c.result.length, blob: new Blob(c.result, { type: m.result.type }) } : null); };
         t.onerror = function () { rej(t.error); };
       });
     }
   };
   try {
-    VDB.load().then(function (o) {
+    VDB.load().then(async function (o) {
       if (!o || T.lastVideo) return;
-      T.lastVideo = { blob: o.blob, ext: o.meta.ext, type: o.meta.type, url: URL.createObjectURL(o.blob), dur: o.meta.dur || 0 };
+      var dur = o.meta.dur || o.n * 1000;   // sin duración guardada (grabación interrumpida): un trozo ≈ 1 s
+      o.blob = await Mp4Fix.fix(o.blob, dur);
+      T.lastVideo = { blob: o.blob, ext: o.meta.ext, type: o.meta.type, url: URL.createObjectURL(o.blob), dur: dur };
       updateLast();
       UI.toast(o.meta.done ? 'Tienes un video sin exportar: botón de descarga en el teleprompter' : 'Se recuperó una grabación interrumpida: botón de descarga en el teleprompter');
     }).catch(function () {});
