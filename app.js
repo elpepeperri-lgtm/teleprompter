@@ -544,7 +544,7 @@
   $('#bRec').addEventListener('click', async function () {
     if (!T.camOk) { $('#startOv').hidden = false; return; }
     if (!T.recording) {
-      try { Cam.startRecording((S.camera.res === '4k' ? 45e6 : S.camera.res === '720' ? 8e6 : 18e6) * (S.camera.fps >= 60 ? 1.4 : 1), S.camera.fps); }
+      try { Cam.startRecording((S.camera.res === '4k' ? 35e6 : S.camera.res === '720' ? 6e6 : 14e6) * (S.camera.fps >= 60 ? 1.25 : 1), S.camera.fps); }
       catch (e) { return UI.info('No se puede grabar', 'Este navegador no admite grabación de video (MediaRecorder).'); }
       T.recording = true; T.t0 = Date.now();
       $('#bRec').classList.add('on'); $('#timer').classList.add('live');
@@ -565,7 +565,7 @@
       if (T.lastVideo) URL.revokeObjectURL(T.lastVideo.url);
       T.lastVideo = { blob: r.blob, ext: r.ext, type: r.type, url: URL.createObjectURL(r.blob), dur: Date.now() - T.t0 };
       showPreview(false);
-    } catch (e) { UI.toast('No se pudo guardar la grabación'); }
+    } catch (e) { UI.info('No se pudo guardar la grabación', (e && (e.name + ': ' + e.message)) || 'Error desconocido. Prueba con una resolución o fps menores.'); }
     $('#timer').textContent = '00:00:00';
   }
 
@@ -596,8 +596,11 @@
     var file = new File([v.blob], 'teleprompter-' + stamp + '.' + v.ext, { type: v.type });
     try {
       if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; }
-    } catch (e) { if (e.name === 'AbortError') return; }
-    downloadBlob(v.blob, file.name); UI.toast('Video descargado');
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      UI.toast('No se pudo abrir “Compartir” (' + (e.name || 'error') + '). Descargando…');
+    }
+    downloadBlob(v.blob, file.name); UI.toast('Video descargado (' + Math.round(v.blob.size / 1048576) + ' MB)');
   });
   $('#bDown').addEventListener('click', function () {
     if (!T.lastVideo) return UI.toast('Aún no hay ningún video grabado');
@@ -665,8 +668,10 @@
       });
     });
   }
+  function micLabel() { var t = Cam.stream && Cam.stream.getAudioTracks()[0]; return t && t.label || ''; }
   async function refreshMics() {
     var sel = $('#cMic'), row = $('#rowMic');
+    var ml = document.querySelector('.meter span'); if (ml) ml.textContent = micLabel() || 'Micrófono';
     try {
       var devs = (await navigator.mediaDevices.enumerateDevices()).filter(function (d) { return d.kind === 'audioinput'; });
       var cur = Cam.stream && Cam.stream.getAudioTracks()[0], curId = cur && cur.getSettings && cur.getSettings().deviceId;
@@ -703,6 +708,23 @@
       if (got && Math.round(got) < S.camera.fps - 2) UI.toast('Tu cámara entrega ' + Math.round(got) + ' fps en esta resolución');
     });
   });
+  // Micrófono externo (inalámbrico, USB-C, Lightning o Bluetooth): al conectarlo o quitarlo, volver a tomar el audio.
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    var micCount = -1, micTimer;
+    navigator.mediaDevices.addEventListener('devicechange', function () {
+      clearTimeout(micTimer);
+      micTimer = setTimeout(async function () {
+        if (current !== 'tele' || !T.camOk) return;
+        var n = (await navigator.mediaDevices.enumerateDevices()).filter(function (d) { return d.kind === 'audioinput'; }).length;
+        var changed = micCount >= 0 && n !== micCount; micCount = n;
+        if (!changed) return refreshMics();
+        if (T.recording) { UI.toast('Cambió el micrófono; se aplicará al terminar de grabar'); return; }
+        S.camera.micId = '';   // vuelve al micrófono predeterminado del sistema, que iOS cambia al externo
+        await restartCamera(); refreshMics();
+        UI.toast('Micrófono: ' + (micLabel() || 'predeterminado'));
+      }, 600);
+    });
+  }
   $('#cMic').addEventListener('change', async function (e) {
     if (T.recording) { UI.toast('Detén la grabación para cambiar el micrófono'); return; }
     S.camera.micId = e.target.value; Store.saveSettings(); await restartCamera(); refreshMics();
