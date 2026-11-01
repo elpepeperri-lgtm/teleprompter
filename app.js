@@ -582,7 +582,7 @@
       if (T.lastVideo) URL.revokeObjectURL(T.lastVideo.url);
       T.lastVideo = { blob: r.blob, ext: r.ext, type: r.type, url: URL.createObjectURL(r.blob), dur: dur };
       freeMemory();   // sin cámara ni motor de voz cargados, iOS tiene memoria para guardar el archivo
-      showPreview(false);
+      showPreview(false); updateLast();
       saveVideo(true);   // abre “Guardar video” de inmediato; si iOS lo bloquea, queda el botón
     } catch (e) { UI.info('No se pudo guardar la grabación', (e && (e.name + ': ' + e.message)) || 'Error desconocido. Prueba con una resolución o fps menores.'); }
     $('#timer').textContent = '00:00:00';
@@ -617,7 +617,7 @@
     }
     disarmDiscard(); closePreview();
     if (T.lastVideo) URL.revokeObjectURL(T.lastVideo.url);
-    T.lastVideo = null; VDB.clear(); UI.toast('Video descartado');
+    T.lastVideo = null; VDB.clear(); updateLast(); UI.toast('Video descartado');
   });
   async function saveVideo(auto) {
     var v = T.lastVideo; if (!v) return;
@@ -639,6 +639,9 @@
     downloadBlob(v.blob, file.name); UI.toast('Video descargado (' + Math.round(v.blob.size / 1048576) + ' MB)');
   }
   $('#pvSave').addEventListener('click', function () { saveVideo(false); });
+  // Aviso en la pantalla de inicio mientras haya un video grabado sin descartar.
+  function updateLast() { $('#btnLast').hidden = !T.lastVideo; }
+  $('#btnLast').addEventListener('click', function () { if (T.lastVideo) showPreview(true); });
 
   /* Los trozos de la grabación se escriben en el almacenamiento del teléfono mientras grabas (no se acumulan en memoria),
      y quedan como copia de seguridad: si la app se cierra, el video se recupera al abrirla de nuevo. */
@@ -676,6 +679,7 @@
     VDB.load().then(function (o) {
       if (!o || T.lastVideo) return;
       T.lastVideo = { blob: o.blob, ext: o.meta.ext, type: o.meta.type, url: URL.createObjectURL(o.blob), dur: o.meta.dur || 0 };
+      updateLast();
       UI.toast(o.meta.done ? 'Tienes un video sin exportar: botón de descarga en el teleprompter' : 'Se recuperó una grabación interrumpida: botón de descarga en el teleprompter');
     }).catch(function () {});
   } catch (e) {}  $('#bDown').addEventListener('click', function () {
