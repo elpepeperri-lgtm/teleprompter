@@ -82,7 +82,8 @@ window.Cam = (function () {
       video: { facingMode: { ideal: opts.facing || 'user' }, width: { ideal: r[0] }, height: { ideal: r[1] }, frameRate: { ideal: opts.fps || 60 } },
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     };
-    if (opts.micId) constraints.audio.deviceId = { exact: opts.micId };
+    // Con un micrófono elegido (lavalier/inalámbrico) se desactiva el procesado del teléfono para conservar su calidad.
+    if (opts.micId) constraints.audio = { deviceId: { exact: opts.micId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false };
     try {
       stream = await navigator.mediaDevices.getUserMedia(constraints);
     } catch (e) {
@@ -145,7 +146,7 @@ window.Cam = (function () {
     var vs = canvas.captureStream(fps || 60);
     var tracks = vs.getVideoTracks().concat(stream.getAudioTracks());
     recMime = pickMime();
-    var opts = { videoBitsPerSecond: bitrate || 8e6 };
+    var opts = { videoBitsPerSecond: bitrate || 8e6, audioBitsPerSecond: 192000 };
     if (recMime) opts.mimeType = recMime;
     recorder = new MediaRecorder(new MediaStream(tracks), opts);
     chunks = [];
