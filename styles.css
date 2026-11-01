@@ -173,3 +173,8 @@ input[type=range] { flex: 1; width: 100%; accent-color: var(--accent); height: 3
 .pv-btns { position: absolute; left: 0; right: 0; bottom: calc(14px + var(--sb)); flex-wrap: wrap; z-index: 2; }
 .pv-btns .primary { flex: 1 1 100%; order: -1; }
 .pv-btns .danger, .pv-btns .link { flex: 1; }
+
+.lastvid { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; width: calc(100% - 32px); margin: 0 16px 12px; padding: 12px 16px; border: 0; border-radius: 14px; background: #0a84ff; color: #fff; text-align: left; font: inherit; }
+.lastvid[hidden] { display: none; }
+.lastvid b { font-size: 16px; }
+.lastvid span { font-size: 13px; opacity: .85; }
