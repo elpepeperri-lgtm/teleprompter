@@ -565,6 +565,8 @@
       if (T.lastVideo) URL.revokeObjectURL(T.lastVideo.url);
       T.lastVideo = { blob: r.blob, ext: r.ext, type: r.type, url: URL.createObjectURL(r.blob), dur: Date.now() - T.t0 };
       showPreview(false);
+      VDB.put({ blob: r.blob, ext: r.ext, type: r.type, dur: T.lastVideo.dur }).catch(function () { UI.toast('No se pudo guardar la copia de seguridad en el teléfono'); });
+      saveVideo(true);   // abre “Guardar video” de inmediato; si iOS lo bloquea, queda el botón
     } catch (e) { UI.info('No se pudo guardar la grabación', (e && (e.name + ': ' + e.message)) || 'Error desconocido. Prueba con una resolución o fps menores.'); }
     $('#timer').textContent = '00:00:00';
   }
@@ -588,9 +590,9 @@
     }
     disarmDiscard(); closePreview();
     if (T.lastVideo) URL.revokeObjectURL(T.lastVideo.url);
-    T.lastVideo = null; UI.toast('Video descartado');
+    T.lastVideo = null; VDB.clear(); UI.toast('Video descartado');
   });
-  $('#pvSave').addEventListener('click', async function () {
+  async function saveVideo(auto) {
     var v = T.lastVideo; if (!v) return;
     var d = new Date(), stamp = d.toISOString().slice(0, 16).replace(/[-:T]/g, '');
     var file = new File([v.blob], 'teleprompter-' + stamp + '.' + v.ext, { type: v.type });
@@ -598,10 +600,34 @@
       if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; }
     } catch (e) {
       if (e.name === 'AbortError') return;
+      if (auto) { UI.toast('Toca “Guardar en Fotos” para guardarlo'); return; }   // iOS pide un toque del usuario
       UI.toast('No se pudo abrir “Compartir” (' + (e.name || 'error') + '). Descargando…');
     }
+    if (auto) return;
     downloadBlob(v.blob, file.name); UI.toast('Video descargado (' + Math.round(v.blob.size / 1048576) + ' MB)');
-  });
+  }
+  $('#pvSave').addEventListener('click', function () { saveVideo(false); });
+
+  /* Copia de seguridad del último video en el dispositivo: si la app se cierra antes de guardarlo en Fotos, se recupera. */
+  var VDB = {
+    open: function () {
+      return new Promise(function (res, rej) {
+        var r = indexedDB.open('tp-video', 1);
+        r.onupgradeneeded = function () { r.result.createObjectStore('v'); };
+        r.onsuccess = function () { res(r.result); }; r.onerror = function () { rej(r.error); };
+      });
+    },
+    put: async function (obj) { var db = await VDB.open(); return new Promise(function (res, rej) { var t = db.transaction('v', 'readwrite'); t.objectStore('v').put(obj, 'last'); t.oncomplete = res; t.onerror = function () { rej(t.error); }; }); },
+    get: async function () { var db = await VDB.open(); return new Promise(function (res, rej) { var q = db.transaction('v').objectStore('v').get('last'); q.onsuccess = function () { res(q.result); }; q.onerror = function () { rej(q.error); }; }); },
+    clear: async function () { var db = await VDB.open(); return new Promise(function (res) { var t = db.transaction('v', 'readwrite'); t.objectStore('v').delete('last'); t.oncomplete = res; t.onerror = res; }); }
+  };
+  try {
+    VDB.get().then(function (o) {
+      if (!o || !o.blob || T.lastVideo) return;
+      T.lastVideo = { blob: o.blob, ext: o.ext, type: o.type, url: URL.createObjectURL(o.blob), dur: o.dur || 0 };
+      UI.toast('Tienes un video guardado sin exportar: botón de descarga en el teleprompter');
+    }).catch(function () {});
+  } catch (e) {}
   $('#bDown').addEventListener('click', function () {
     if (!T.lastVideo) return UI.toast('Aún no hay ningún video grabado');
     showPreview(true);
