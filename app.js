@@ -1,4 +1,4 @@
-﻿(function () {
+(function () {
   'use strict';
   var $ = function (s, r) { return (r || document).querySelector(s); };
   var $$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
@@ -544,7 +544,15 @@
   $('#bRec').addEventListener('click', async function () {
     if (!T.camOk) { $('#startOv').hidden = false; return; }
     if (!T.recording) {
-      try { Cam.startRecording((S.camera.res === '4k' ? 35e6 : S.camera.res === '720' ? 6e6 : 14e6) * (S.camera.fps >= 60 ? 1.25 : 1), S.camera.fps); }
+      var br = (S.camera.res === '4k' ? 30e6 : S.camera.res === '720' ? 6e6 : 12e6) * (S.camera.fps >= 60 ? 1.2 : 1), seq = 0, onChunk = null;
+      T.chunkErr = false; T.pending = Promise.resolve(); T.meta = null;
+      try { await VDB.open(); onChunk = function (b) { var n = seq++; T.pending = T.pending.then(function () { return VDB.chunk(n, b); }).catch(function () { T.chunkErr = true; }); }; }
+      catch (e) { onChunk = null; }
+      try {
+        var info = Cam.startRecording(br, S.camera.fps, onChunk);
+        T.meta = { type: info.type, ext: info.ext, done: false, dur: 0 };
+        if (onChunk) { T.pending = VDB.begin(T.meta).catch(function () { T.chunkErr = true; }); }
+      }
       catch (e) { return UI.info('No se puede grabar', 'Este navegador no admite grabación de video (MediaRecorder).'); }
       T.recording = true; T.t0 = Date.now();
       $('#bRec').classList.add('on'); $('#timer').classList.add('live');
@@ -561,11 +569,19 @@
     $('#bRec').classList.remove('on'); $('#timer').classList.remove('live');
     unlockScreen(); syncScrollEngines();
     try {
-      var r = await Cam.stopRecording();
+      var r = await Cam.stopRecording(), dur = Date.now() - T.t0;
+      if (!r.blob) {   // los trozos están en el almacenamiento del teléfono: se arma el video desde ahí
+        await T.pending;
+        if (T.chunkErr) throw new Error('No hay espacio suficiente en el teléfono para guardar la grabación');
+        T.meta.done = true; T.meta.dur = dur;
+        await VDB.finish(T.meta);
+        var o = await VDB.load();
+        if (!o) throw new Error('La grabación quedó vacía');
+        r = { blob: o.blob, ext: T.meta.ext, type: T.meta.type };
+      }
       if (T.lastVideo) URL.revokeObjectURL(T.lastVideo.url);
-      T.lastVideo = { blob: r.blob, ext: r.ext, type: r.type, url: URL.createObjectURL(r.blob), dur: Date.now() - T.t0 };
+      T.lastVideo = { blob: r.blob, ext: r.ext, type: r.type, url: URL.createObjectURL(r.blob), dur: dur };
       showPreview(false);
-      VDB.put({ blob: r.blob, ext: r.ext, type: r.type, dur: T.lastVideo.dur }).catch(function () { UI.toast('No se pudo guardar la copia de seguridad en el teléfono'); });
       saveVideo(true);   // abre “Guardar video” de inmediato; si iOS lo bloquea, queda el botón
     } catch (e) { UI.info('No se pudo guardar la grabación', (e && (e.name + ': ' + e.message)) || 'Error desconocido. Prueba con una resolución o fps menores.'); }
     $('#timer').textContent = '00:00:00';
@@ -608,27 +624,45 @@
   }
   $('#pvSave').addEventListener('click', function () { saveVideo(false); });
 
-  /* Copia de seguridad del último video en el dispositivo: si la app se cierra antes de guardarlo en Fotos, se recupera. */
+  /* Los trozos de la grabación se escriben en el almacenamiento del teléfono mientras grabas (no se acumulan en memoria),
+     y quedan como copia de seguridad: si la app se cierra, el video se recupera al abrirla de nuevo. */
   var VDB = {
+    db: null,
     open: function () {
-      return new Promise(function (res, rej) {
-        var r = indexedDB.open('tp-video', 1);
-        r.onupgradeneeded = function () { r.result.createObjectStore('v'); };
+      if (!VDB.db) VDB.db = new Promise(function (res, rej) {
+        var r = indexedDB.open('tp-video', 2);
+        r.onupgradeneeded = function () { var d = r.result; if (!d.objectStoreNames.contains('v')) d.createObjectStore('v'); if (!d.objectStoreNames.contains('c')) d.createObjectStore('c'); };
         r.onsuccess = function () { res(r.result); }; r.onerror = function () { rej(r.error); };
       });
+      return VDB.db;
     },
-    put: async function (obj) { var db = await VDB.open(); return new Promise(function (res, rej) { var t = db.transaction('v', 'readwrite'); t.objectStore('v').put(obj, 'last'); t.oncomplete = res; t.onerror = function () { rej(t.error); }; }); },
-    get: async function () { var db = await VDB.open(); return new Promise(function (res, rej) { var q = db.transaction('v').objectStore('v').get('last'); q.onsuccess = function () { res(q.result); }; q.onerror = function () { rej(q.error); }; }); },
-    clear: async function () { var db = await VDB.open(); return new Promise(function (res) { var t = db.transaction('v', 'readwrite'); t.objectStore('v').delete('last'); t.oncomplete = res; t.onerror = res; }); }
+    tx: async function (stores, fn) {
+      var db = await VDB.open();
+      return new Promise(function (res, rej) {
+        var t = db.transaction(stores, 'readwrite'), out;
+        out = fn(t); t.oncomplete = function () { res(out && out.result !== undefined ? out.result : out); }; t.onerror = t.onabort = function () { rej(t.error); };
+      });
+    },
+    begin: function (meta) { return VDB.tx(['v', 'c'], function (t) { t.objectStore('c').clear(); t.objectStore('v').put(meta, 'meta'); }); },
+    chunk: function (seq, blob) { return VDB.tx(['c'], function (t) { t.objectStore('c').put(blob, seq); }); },
+    finish: function (meta) { return VDB.tx(['v'], function (t) { t.objectStore('v').put(meta, 'meta'); }); },
+    clear: function () { return VDB.tx(['v', 'c'], function (t) { t.objectStore('c').clear(); t.objectStore('v').clear(); }); },
+    load: async function () {
+      var db = await VDB.open();
+      return new Promise(function (res, rej) {
+        var t = db.transaction(['v', 'c']), m = t.objectStore('v').get('meta'), c = t.objectStore('c').getAll();
+        t.oncomplete = function () { res(m.result && c.result && c.result.length ? { meta: m.result, blob: new Blob(c.result, { type: m.result.type }) } : null); };
+        t.onerror = function () { rej(t.error); };
+      });
+    }
   };
   try {
-    VDB.get().then(function (o) {
-      if (!o || !o.blob || T.lastVideo) return;
-      T.lastVideo = { blob: o.blob, ext: o.ext, type: o.type, url: URL.createObjectURL(o.blob), dur: o.dur || 0 };
-      UI.toast('Tienes un video guardado sin exportar: botón de descarga en el teleprompter');
+    VDB.load().then(function (o) {
+      if (!o || T.lastVideo) return;
+      T.lastVideo = { blob: o.blob, ext: o.meta.ext, type: o.meta.type, url: URL.createObjectURL(o.blob), dur: o.meta.dur || 0 };
+      UI.toast(o.meta.done ? 'Tienes un video sin exportar: botón de descarga en el teleprompter' : 'Se recuperó una grabación interrumpida: botón de descarga en el teleprompter');
     }).catch(function () {});
-  } catch (e) {}
-  $('#bDown').addEventListener('click', function () {
+  } catch (e) {}  $('#bDown').addEventListener('click', function () {
     if (!T.lastVideo) return UI.toast('Aún no hay ningún video grabado');
     showPreview(true);
   });
