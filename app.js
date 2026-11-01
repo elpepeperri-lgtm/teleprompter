@@ -544,7 +544,7 @@
   $('#bRec').addEventListener('click', async function () {
     if (!T.camOk) { $('#startOv').hidden = false; return; }
     if (!T.recording) {
-      var br = (S.camera.res === '4k' ? 30e6 : S.camera.res === '720' ? 6e6 : 12e6) * (S.camera.fps >= 60 ? 1.2 : 1), seq = 0, onChunk = null;
+      var br = (S.camera.res === '4k' ? 25e6 : S.camera.res === '720' ? 5e6 : 9e6) * (S.camera.fps >= 60 ? 1.2 : 1), seq = 0, onChunk = null;
       T.chunkErr = false; T.pending = Promise.resolve(); T.meta = null;
       try { await VDB.open(); onChunk = function (b) { var n = seq++; T.pending = T.pending.then(function () { return VDB.chunk(n, b); }).catch(function () { T.chunkErr = true; }); }; }
       catch (e) { onChunk = null; }
@@ -581,6 +581,7 @@
       }
       if (T.lastVideo) URL.revokeObjectURL(T.lastVideo.url);
       T.lastVideo = { blob: r.blob, ext: r.ext, type: r.type, url: URL.createObjectURL(r.blob), dur: dur };
+      freeMemory();   // sin cámara ni motor de voz cargados, iOS tiene memoria para guardar el archivo
       showPreview(false);
       saveVideo(true);   // abre “Guardar video” de inmediato; si iOS lo bloquea, queda el botón
     } catch (e) { UI.info('No se pudo guardar la grabación', (e && (e.name + ': ' + e.message)) || 'Error desconocido. Prueba con una resolución o fps menores.'); }
@@ -593,7 +594,17 @@
     $('#pvDiscard').hidden = isReview; $('#pvClose').hidden = !isReview;
     disarmDiscard();
   }
-  function closePreview() { var el = $('#pvVid'); el.pause(); el.removeAttribute('src'); el.load(); $('#preview').hidden = true; }
+  // Libera cámara, motor de voz y medidor de audio. La cámara vuelve sola al cerrar la vista previa.
+  function freeMemory() {
+    T.rehearsing = false; stopSpeech(); syncScrollEngines();
+    try { VoskEngine.unload(); } catch (e) {}
+    if (T.audio) { try { T.audio.ctx.close(); } catch (e) {} T.audio = null; }
+    Cam.stop(); T.camOk = false;
+  }
+  function closePreview() {
+    var el = $('#pvVid'); el.pause(); el.removeAttribute('src'); el.load(); $('#preview').hidden = true;
+    if (current === 'tele' && !T.camOk) startCamera();
+  }
   $('#pvClose').addEventListener('click', closePreview);
   var discardTimer;
   function disarmDiscard() { clearTimeout(discardTimer); var b = $('#pvDiscard'); b.dataset.armed = ''; b.textContent = 'Descartar'; b.style.background = ''; b.style.color = ''; }
@@ -610,15 +621,20 @@
   });
   async function saveVideo(auto) {
     var v = T.lastVideo; if (!v) return;
+    freeMemory();
+    var pv = $('#pvVid'); pv.pause(); pv.removeAttribute('src'); pv.load();   // el video de la vista previa ocupa memoria mientras iOS prepara el archivo
     var d = new Date(), stamp = d.toISOString().slice(0, 16).replace(/[-:T]/g, '');
     var file = new File([v.blob], 'teleprompter-' + stamp + '.' + v.ext, { type: v.type });
+    var restore = function () { if (!$('#preview').hidden && !pv.getAttribute('src') && T.lastVideo) pv.src = T.lastVideo.url; };
     try {
-      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); return; }
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file] }); restore(); return; }
     } catch (e) {
+      restore();
       if (e.name === 'AbortError') return;
       if (auto) { UI.toast('Toca “Guardar en Fotos” para guardarlo'); return; }   // iOS pide un toque del usuario
       UI.toast('No se pudo abrir “Compartir” (' + (e.name || 'error') + '). Descargando…');
     }
+    restore();
     if (auto) return;
     downloadBlob(v.blob, file.name); UI.toast('Video descargado (' + Math.round(v.blob.size / 1048576) + ' MB)');
   }
