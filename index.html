@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Lato:wght@400;700&family=Merriweather:wght@400;700&family=Montserrat:wght@400;600;700&family=Open+Sans:wght@400;600;700&family=Roboto:wght@400;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=11">
+<link rel="stylesheet" href="styles.css?v=12">
 </head>
 <body>
 <main id="app">
@@ -32,6 +32,9 @@
       <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l5 5"/></svg>
       <input id="q" type="search" placeholder="Buscar por título o contenido" autocomplete="off" enterkeyhint="search">
     </div>
+    <button id="btnLast" class="lastvid" hidden>
+      <b>Video sin guardar</b><span>Toca para guardarlo en Fotos</span>
+    </button>
     <ul id="list"></ul>
     <p id="empty" hidden></p>
     <button id="btnNew" class="fab">+ Nuevo guion</button>
@@ -199,11 +202,11 @@
 <div id="toast" class="toast" hidden></div>
 <input id="fileIn" type="file" accept="application/json,.json" hidden>
 
-<script src="tracker.js?v=11"></script>
-<script src="store.js?v=11"></script>
-<script src="camera.js?v=11"></script>
+<script src="tracker.js?v=12"></script>
+<script src="store.js?v=12"></script>
+<script src="camera.js?v=12"></script>
 <script src="vosk-engine.js?v=3"></script>
-<script src="app.js?v=11"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>
 
