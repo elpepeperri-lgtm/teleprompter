@@ -705,7 +705,15 @@
   }
   $('#pvSave').addEventListener('click', function () { saveVideo(false); });
   $('#pvDown').addEventListener('click', downloadVideo);
-  $('#pvSplit').addEventListener('click', function () { freeMemory(); unloadPlayer(); showParts(); });  // Aviso en la pantalla de inicio mientras haya un video grabado sin descartar.
+  $('#pvSplit').addEventListener('click', function () { freeMemory(); unloadPlayer(); showParts(); });
+  // Diagnóstico: cómo viene el archivo de Safari (original) y cómo queda tras la corrección, para una captura.
+  $('#pvDiag').addEventListener('click', async function () {
+    var v = T.lastVideo; if (!v) return;
+    var txt = '';
+    try { var o = await VDB.load(); if (o) txt += 'ORIGINAL\n' + await Mp4Fix.describe(o.blob) + '\n\n'; } catch (e) {}
+    try { txt += 'CORREGIDO\n' + await Mp4Fix.describe(v.blob); } catch (e) { txt += 'error: ' + e.message; }
+    UI.info('Info técnica (v17 · ' + (v.dur ? fmtDur(v.dur) : '?') + ')', txt);
+  });  // Aviso en la pantalla de inicio mientras haya un video grabado sin descartar.
   function updateLast() { $('#btnLast').hidden = !T.lastVideo; }
   $('#btnLast').addEventListener('click', function () { if (T.lastVideo) showPreview(true); });
 
