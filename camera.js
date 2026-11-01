@@ -20,8 +20,21 @@ window.Cam = (function () {
   var canvas, video, gl, prog, tex, loc = {}, ctx2d;
   var stream = null, running = false, raf = 0;
   var params = { mirror: true, zoom: 1, filter: 'none', blur: false, hdr: false };
-  var recorder = null, chunks = [], recMime = '';
-  var lastW = 0, lastH = 0;
+  var recorder = null, chunks = [], recMime = '', recDirect = false;
+  var lastW = 0, lastH = 0, shownDirect = null;
+
+  // Sin efectos (filtro, desenfoque, HDR, zoom) no hace falta procesar cada cuadro: se muestra el <video> de la cámara
+  // y se graba su señal tal cual con el codificador del teléfono. Mucho menos trabajo, menos calor y menos batería.
+  function direct() {
+    if (recorder && recorder.state !== 'inactive') return recDirect;
+    return (params.filter || 'none') === 'none' && !params.blur && !params.hdr && params.zoom <= 1.01;
+  }
+  function showView(d) {
+    if (d === shownDirect) return;
+    shownDirect = d;
+    canvas.style.visibility = d ? 'hidden' : '';
+    video.classList.toggle('live', d);
+  }
 
   function init(cv, vd) {
     canvas = cv; video = vd;
@@ -52,7 +65,11 @@ window.Cam = (function () {
 
   function draw() {
     raf = requestAnimationFrame(draw);
-    if (!running || video.readyState < 2 || !video.videoWidth) return;
+    if (!running) return;
+    var d = direct();
+    showView(d);
+    video.classList.toggle('mirror', d && params.mirror);
+    if (d || video.readyState < 2 || !video.videoWidth) return;
     var w = video.videoWidth, h = video.videoHeight;
     if (w !== lastW || h !== lastH) { canvas.width = lastW = w; canvas.height = lastH = h; }
     if (gl) {
@@ -127,6 +144,18 @@ window.Cam = (function () {
     return { stream: stream, max: max, settings: vt.getSettings ? vt.getSettings() : {} };
   }
 
+  // Miniatura JPEG pequeña del cuadro actual (para la vista previa sin cargar el video).
+  function thumb() {
+    try {
+      var w = video.videoWidth, h = video.videoHeight; if (!w) return '';
+      var s = 320 / Math.max(w, h), c = document.createElement('canvas'); c.width = Math.round(w * s); c.height = Math.round(h * s);
+      var x = c.getContext('2d');
+      if (params.mirror) { x.translate(c.width, 0); x.scale(-1, 1); }
+      x.drawImage(video, 0, 0, c.width, c.height);
+      return c.toDataURL('image/jpeg', 0.7);
+    } catch (e) { return ''; }
+  }
+
   function stop() {
     running = false;
     if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
@@ -144,8 +173,9 @@ window.Cam = (function () {
   // onChunk(blob): si se entrega, cada trozo se pasa al llamador (que lo guarda en disco) y no se acumula en memoria.
   function startRecording(bitrate, fps, onChunk) {
     if (!stream || !window.MediaRecorder) throw new Error('Grabación no disponible');
-    var vs = canvas.captureStream(fps || 60);
-    var tracks = vs.getVideoTracks().concat(stream.getAudioTracks());
+    recDirect = direct();
+    var vt = recDirect ? stream.getVideoTracks() : canvas.captureStream(fps || 60).getVideoTracks();
+    var tracks = vt.concat(stream.getAudioTracks());
     recMime = pickMime();
     var opts = { videoBitsPerSecond: bitrate || 8e6, audioBitsPerSecond: 192000 };
     if (recMime) opts.mimeType = recMime;
@@ -157,7 +187,7 @@ window.Cam = (function () {
     };
     recorder.start(1000);
     var t = (recorder.mimeType || recMime || 'video/mp4').split(';')[0];
-    return { type: t, ext: t.indexOf('mp4') >= 0 ? 'mp4' : 'webm' };
+    return { type: t, ext: t.indexOf('mp4') >= 0 ? 'mp4' : 'webm', direct: recDirect };
   }
 
   function stopRecording() {
@@ -174,7 +204,8 @@ window.Cam = (function () {
   }
 
   return {
-    init: init, start: start, startDemo: startDemo, stop: stop, startRecording: startRecording, stopRecording: stopRecording,
+    init: init, start: start, startDemo: startDemo, stop: stop, startRecording: startRecording, stopRecording: stopRecording, thumb: thumb,
+    get direct() { return direct(); },
     params: params,
     get stream() { return stream; },
     get recording() { return !!recorder && recorder.state !== 'inactive'; }
