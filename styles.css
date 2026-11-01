@@ -85,7 +85,6 @@ svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width:
 #stext { position: relative; white-space: pre-wrap; word-break: break-word; color: #fff; line-height: 1.38; padding-bottom: 60%; font-family: "Open Sans", sans-serif; }
 #stext .w { transition: opacity .08s; border-radius: 6px; }
 #stext .w.read { opacity: .38; }
-#stext .w.cur { background: rgba(255,214,10,.9); color: #000; box-shadow: 0 0 0 3px rgba(255,214,10,.9); }
 .handle { position: absolute; bottom: 8px; width: 42px; height: 42px; border-radius: 14px; display: grid; place-items: center; background: rgba(255,255,255,.2); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); touch-action: none; z-index: 2; }
 .handle svg { width: 22px; height: 22px; }
 .handle.l { left: 8px; } .handle.r { right: 8px; }
