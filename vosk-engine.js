@@ -62,5 +62,11 @@ window.VoskEngine = (function () {
     };
   }
 
-  return { load: load, start: start, get model() { return model; }, get ready() { return !!model; } };
+  // Libera el modelo (cientos de MB de RAM); se vuelve a cargar desde la caché al usar la voz de nuevo.
+  function unload() {
+    var m = model; model = null; loading = null;
+    try { if (m && m.terminate) m.terminate(); } catch (e) {}
+  }
+
+  return { unload: unload, load: load, start: start, get model() { return model; }, get ready() { return !!model; } };
 })();
