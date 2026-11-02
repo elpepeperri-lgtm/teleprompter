@@ -14,8 +14,8 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: Teleprompter
-        CFBundleShortVersionString: "1.1"
-        CFBundleVersion: "2"
+        CFBundleShortVersionString: "1.2"
+        CFBundleVersion: "3"
         LSRequiresIPhoneOS: true
         UILaunchScreen:
           UIColorName: ""

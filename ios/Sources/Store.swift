@@ -94,6 +94,14 @@ final class AppSettings: ObservableObject {
     @Published var quality: String { didSet { d.set(quality, forKey: "quality") } }           // "max" | "high"
     @Published var countdown: Bool { didSet { d.set(countdown, forKey: "countdown") } }       // 3-2-1 antes de grabar
     @Published var showGrid: Bool { didSet { d.set(showGrid, forKey: "showGrid") } }
+    @Published var mirrorTextV: Bool { didSet { d.set(mirrorTextV, forKey: "mirrorTextV") } }
+    @Published var alignment: String { didSet { d.set(alignment, forKey: "alignment") } }    // "left" | "center" | "right"
+    @Published var fontStyle: String { didSet { d.set(fontStyle, forKey: "fontStyle") } }    // "normal" | "rounded" | "serif"
+    @Published var readAtTop: Bool { didSet { d.set(readAtTop, forKey: "readAtTop") } }      // palabra actual arriba (como la web)
+    @Published var boxTop: Double { didSet { d.set(boxTop, forKey: "boxTop") } }             // distancia del recuadro al borde superior
+    @Published var mirrorPreview: Bool { didSet { d.set(mirrorPreview, forKey: "mirrorPreview") } }     // verte en espejo
+    @Published var mirrorRecording: Bool { didSet { d.set(mirrorRecording, forKey: "mirrorRecording") } } // el video sale en espejo
+    @Published var zoom: Double { didSet { d.set(zoom, forKey: "zoom") } }
 
     init() {
         fontSize = d.object(forKey: "fontSize") as? Double ?? 34
@@ -110,6 +118,15 @@ final class AppSettings: ObservableObject {
         quality = d.string(forKey: "quality") ?? "max"
         countdown = d.object(forKey: "countdown") as? Bool ?? true
         showGrid = d.object(forKey: "showGrid") as? Bool ?? false
+        mirrorTextV = d.object(forKey: "mirrorTextV") as? Bool ?? false
+        let wasCentered = d.object(forKey: "centered") as? Bool ?? false
+        alignment = d.string(forKey: "alignment") ?? (wasCentered ? "center" : "left")
+        fontStyle = d.string(forKey: "fontStyle") ?? "normal"
+        readAtTop = d.object(forKey: "readAtTop") as? Bool ?? true
+        boxTop = d.object(forKey: "boxTop") as? Double ?? 0
+        mirrorPreview = d.object(forKey: "mirrorPreview") as? Bool ?? true
+        mirrorRecording = d.object(forKey: "mirrorRecording") as? Bool ?? false
+        zoom = d.object(forKey: "zoom") as? Double ?? 1
     }
 
     /// Bitrate HEVC en bits/s. "Máxima" ≈ lo que graba la app Cámara (o un poco más).

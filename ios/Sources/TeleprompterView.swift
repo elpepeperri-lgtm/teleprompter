@@ -53,7 +53,8 @@ final class PrompterModel: ObservableObject {
 
     func cameraConfig() -> CameraController.Config {
         let st = settings ?? AppSettings()
-        return .init(front: st.front, resolution: st.resolution, fps: st.fps, bitrate: st.bitrate)
+        return .init(front: st.front, resolution: st.resolution, fps: st.fps, bitrate: st.bitrate,
+                     mirrorRecording: st.mirrorRecording, zoom: st.zoom)
     }
 
     func startCamera() {
@@ -259,7 +260,7 @@ struct TeleprompterView: View {
 
     var body: some View {
         ZStack {
-            CameraPreview(session: model.camera.session).ignoresSafeArea()
+            CameraPreview(session: model.camera.session, mirrored: settings.front && settings.mirrorPreview).ignoresSafeArea()
             if settings.showGrid { GridOverlay().ignoresSafeArea() }
 
             VStack(spacing: 8) {
@@ -317,7 +318,8 @@ struct TeleprompterView: View {
     private var scriptBox: some View {
         VStack(spacing: 0) {
             ScriptView(tokens: model.tokens, version: model.version, pos: model.pos, fontSize: CGFloat(settings.fontSize),
-                       centered: settings.centered, mirrored: settings.mirrorText,
+                       alignment: settings.alignment, fontStyle: settings.fontStyle,
+                       mirrorH: settings.mirrorText, mirrorV: settings.mirrorTextV, readAtTop: settings.readAtTop,
                        autoScroll: model.active && settings.scrollMode == "auto", speed: settings.speed,
                        onTap: { model.tap($0) })
             captionBar
@@ -326,6 +328,7 @@ struct TeleprompterView: View {
         .background(Color.black.opacity(settings.bgOpacity))
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .padding(.horizontal, 10)
+        .padding(.top, CGFloat(settings.boxTop))
     }
 
     /// Debajo del guion: medidor del micrófono, lo que se está escuchando y el avance.

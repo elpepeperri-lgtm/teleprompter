@@ -176,38 +176,83 @@ struct TextSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Texto") {
-                    VStack(alignment: .leading) {
-                        Text("Tamaño: \(Int(settings.fontSize))")
-                        Slider(value: $settings.fontSize, in: 20...80, step: 1)
-                    }
-                    VStack(alignment: .leading) {
-                        Text("Alto del recuadro: \(Int(settings.boxHeight))")
-                        Slider(value: $settings.boxHeight, in: 150...620, step: 10)
-                    }
-                    VStack(alignment: .leading) {
-                        Text("Opacidad del fondo: \(Int(settings.bgOpacity * 100))%")
-                        Slider(value: $settings.bgOpacity, in: 0...1, step: 0.05)
-                    }
-                    Toggle("Centrar texto", isOn: $settings.centered)
-                    Toggle("Espejo del texto (para vidrio de teleprompter)", isOn: $settings.mirrorText)
-                }
-                Section("Seguimiento de voz") {
-                    Picker("Idioma", selection: $settings.language) {
-                        Text("Español (Colombia)").tag("es-CO")
-                        Text("Español (México)").tag("es-MX")
-                        Text("Español (España)").tag("es-ES")
-                        Text("Español (EE. UU.)").tag("es-US")
-                    }
-                    VStack(alignment: .leading) {
-                        Text("Velocidad automática: \(Int(settings.speed)) pt/s")
-                        Slider(value: $settings.speed, in: 10...150, step: 5)
-                    }
-                }
+                letterSection
+                boxSection
+                mirrorSection
+                voiceSection
             }
             .navigationTitle("Texto")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Listo") { dismiss() } } }
+        }
+    }
+
+    private var letterSection: some View {
+        Section("Letra") {
+            Picker("Tipo de letra", selection: $settings.fontStyle) {
+                Text("Normal").tag("normal")
+                Text("Redondeada").tag("rounded")
+                Text("Serif").tag("serif")
+            }
+            .pickerStyle(.segmented)
+            VStack(alignment: .leading) {
+                Text("Tamaño: \(Int(settings.fontSize))")
+                Slider(value: $settings.fontSize, in: 20...80, step: 1)
+            }
+            Picker("Alineación", selection: $settings.alignment) {
+                Text("Izquierda").tag("left")
+                Text("Centro").tag("center")
+                Text("Derecha").tag("right")
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+
+    private var boxSection: some View {
+        Section("Recuadro") {
+            Picker("Palabra actual", selection: $settings.readAtTop) {
+                Text("Arriba").tag(true)
+                Text("Primer tercio").tag(false)
+            }
+            .pickerStyle(.segmented)
+            VStack(alignment: .leading) {
+                Text("Alto: \(Int(settings.boxHeight))")
+                Slider(value: $settings.boxHeight, in: 150...620, step: 10)
+            }
+            VStack(alignment: .leading) {
+                Text("Distancia desde arriba: \(Int(settings.boxTop))")
+                Slider(value: $settings.boxTop, in: 0...300, step: 5)
+            }
+            VStack(alignment: .leading) {
+                Text("Opacidad del fondo: \(Int(settings.bgOpacity * 100))%")
+                Slider(value: $settings.bgOpacity, in: 0...1, step: 0.05)
+            }
+        }
+    }
+
+    private var mirrorSection: some View {
+        Section {
+            Toggle("Espejo horizontal", isOn: $settings.mirrorText)
+            Toggle("Espejo vertical", isOn: $settings.mirrorTextV)
+        } header: {
+            Text("Espejo del texto")
+        } footer: {
+            Text("Para usar el iPhone con un vidrio de teleprompter (el texto se refleja).")
+        }
+    }
+
+    private var voiceSection: some View {
+        Section("Seguimiento de voz") {
+            Picker("Idioma", selection: $settings.language) {
+                Text("Español (Colombia)").tag("es-CO")
+                Text("Español (México)").tag("es-MX")
+                Text("Español (España)").tag("es-ES")
+                Text("Español (EE. UU.)").tag("es-US")
+            }
+            VStack(alignment: .leading) {
+                Text("Velocidad automática: \(Int(settings.speed)) pt/s")
+                Slider(value: $settings.speed, in: 10...150, step: 5)
+            }
         }
     }
 }
@@ -224,48 +269,77 @@ struct CameraSettingsView: View {
                     Text(camera.statusText.isEmpty ? "Iniciando cámara…" : camera.statusText)
                         .font(.footnote).foregroundStyle(.secondary)
                 }
-                Section("Cámara") {
-                    Picker("Cámara", selection: $settings.front) {
-                        Text("Frontal").tag(true)
-                        Text("Trasera").tag(false)
-                    }
-                    .pickerStyle(.segmented)
-                    Picker("Resolución", selection: $settings.resolution) {
-                        Text("1080p").tag("1080")
-                        Text("4K").tag("4k")
-                    }
-                    .pickerStyle(.segmented)
-                    Picker("Fotogramas por segundo", selection: $settings.fps) {
-                        Text("24 fps").tag(24)
-                        Text("30 fps").tag(30)
-                        Text("60 fps").tag(60)
-                    }
-                    .pickerStyle(.segmented)
-                    Picker("Calidad", selection: $settings.quality) {
-                        Text("Máxima").tag("max")
-                        Text("Alta").tag("high")
-                    }
-                    .pickerStyle(.segmented)
-                    Text("≈ \(Int(Double(settings.bitrate) * 60 / 8 / 1_048_576)) MB por minuto · HEVC (formato de la cámara del iPhone)")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    Toggle("Cuenta regresiva de 3 s al grabar", isOn: $settings.countdown)
-                    Toggle("Cuadrícula para encuadrar", isOn: $settings.showGrid)
-                }
-                Section("Micrófono") {
-                    if camera.inputs.isEmpty {
-                        Text("Sin micrófonos").foregroundStyle(.secondary)
-                    } else {
-                        Picker("Micrófono", selection: Binding(get: { camera.currentInputUID }, set: { camera.selectInput(uid: $0) })) {
-                            ForEach(camera.inputs, id: \.uid) { p in Text(p.portName).tag(p.uid) }
-                        }
-                    }
-                    Text("Si conectas un micrófono externo (USB-C, como el receptor del Lark M2), la app lo usa sola. El audio se graba sin el filtro de llamadas de iOS.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
+                cameraSection
+                imageSection
+                micSection
             }
             .navigationTitle("Cámara")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Listo") { dismiss() } } }
+            .onChange(of: settings.zoom) { _, z in camera.setZoom(z) }
+        }
+    }
+
+    private var mbPerMinute: Int { Int(Double(settings.bitrate) * 60 / 8 / 1_048_576) }
+
+    private var cameraSection: some View {
+        Section("Grabación") {
+            Picker("Cámara", selection: $settings.front) {
+                Text("Frontal").tag(true)
+                Text("Trasera").tag(false)
+            }
+            .pickerStyle(.segmented)
+            Picker("Resolución", selection: $settings.resolution) {
+                Text("1080p").tag("1080")
+                Text("4K").tag("4k")
+            }
+            .pickerStyle(.segmented)
+            Picker("Fotogramas por segundo", selection: $settings.fps) {
+                Text("24 fps").tag(24)
+                Text("30 fps").tag(30)
+                Text("60 fps").tag(60)
+            }
+            .pickerStyle(.segmented)
+            Picker("Calidad", selection: $settings.quality) {
+                Text("Máxima").tag("max")
+                Text("Alta").tag("high")
+            }
+            .pickerStyle(.segmented)
+            Text("≈ \(mbPerMinute) MB por minuto · HEVC (formato de la cámara del iPhone)")
+                .font(.footnote).foregroundStyle(.secondary)
+            Toggle("Cuenta regresiva de 3 s al grabar", isOn: $settings.countdown)
+        }
+    }
+
+    private var imageSection: some View {
+        Section {
+            VStack(alignment: .leading) {
+                Text(String(format: "Zoom: %.1f×", settings.zoom))
+                Slider(value: $settings.zoom, in: 1...4, step: 0.1)
+            }
+            Toggle("Verme en espejo", isOn: $settings.mirrorPreview)
+            Toggle("Grabar el video en espejo", isOn: $settings.mirrorRecording)
+            Toggle("Cuadrícula para encuadrar", isOn: $settings.showGrid)
+        } header: {
+            Text("Imagen")
+        } footer: {
+            Text("“Verme en espejo” solo cambia cómo te ves con la cámara frontal. “Grabar en espejo” invierte el video guardado (normalmente se deja apagado, como en la app Cámara).")
+        }
+    }
+
+    private var micSection: some View {
+        Section {
+            if camera.inputs.isEmpty {
+                Text("Sin micrófonos").foregroundStyle(.secondary)
+            } else {
+                Picker("Micrófono", selection: Binding(get: { camera.currentInputUID }, set: { camera.selectInput(uid: $0) })) {
+                    ForEach(camera.inputs, id: \.uid) { p in Text(p.portName).tag(p.uid) }
+                }
+            }
+        } header: {
+            Text("Micrófono")
+        } footer: {
+            Text("Si conectas un micrófono externo (USB-C, como el receptor del Lark M2), la app lo usa sola. El audio se graba sin el filtro de llamadas de iOS.")
         }
     }
 }

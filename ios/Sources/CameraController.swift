@@ -10,6 +10,8 @@ final class CameraController: NSObject, ObservableObject {
         var resolution: String
         var fps: Int
         var bitrate: Int
+        var mirrorRecording: Bool
+        var zoom: Double
     }
 
     let session = AVCaptureSession()
@@ -154,14 +156,31 @@ final class CameraController: NSObject, ObservableObject {
         if let dev = videoIn?.device { applyFormat(dev, c) }
         if let conn = videoOut.connection(with: .video) {
             if conn.isVideoRotationAngleSupported(90) { conn.videoRotationAngle = 90 }   // vertical
-            if conn.isVideoMirroringSupported {                                           // el video sale como te ven los demás
+            if conn.isVideoMirroringSupported {   // normal: el video sale como te ven los demás; o en espejo si se pidió
                 conn.automaticallyAdjustsVideoMirroring = false
-                conn.isVideoMirrored = false
+                conn.isVideoMirrored = c.mirrorRecording
             }
             if conn.isVideoStabilizationSupported { conn.preferredVideoStabilizationMode = .standard }
         }
         session.commitConfiguration()
         config = c
+        applyZoom(c.zoom)
+    }
+
+    /// Zoom de la cámara (se graba así; no es un recorte posterior).
+    func setZoom(_ z: Double) {
+        queue.async { self.applyZoom(z) }
+    }
+
+    private func applyZoom(_ z: Double) {
+        guard let dev = videoIn?.device else { return }
+        let maxZ = min(dev.activeFormat.videoMaxZoomFactor, 6)
+        let target = max(1, min(CGFloat(z), maxZ))
+        do {
+            try dev.lockForConfiguration()
+            dev.videoZoomFactor = target
+            dev.unlockForConfiguration()
+        } catch {}
     }
 
     /// Elige el formato nativo de la cámara con la resolución y los fps pedidos (8 bits, como la app Cámara en "Más compatible").

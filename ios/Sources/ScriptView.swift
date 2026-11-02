@@ -6,10 +6,36 @@ import UIKit
 final class PreviewView: UIView {
     override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
     var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+    var mirrored = true
+    private var timer: Timer?
+
+    /// Vertical y espejo según el ajuste. La conexión aparece cuando la cámara arranca (o cambia), así que se
+    /// revisa también unas veces por segundo hasta que exista.
+    func applyConnection() {
+        guard let c = previewLayer.connection else {
+            if timer == nil {
+                timer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in self?.applyConnection() }
+            }
+            return
+        }
+        if c.isVideoRotationAngleSupported(90) && c.videoRotationAngle != 90 { c.videoRotationAngle = 90 }
+        if c.isVideoMirroringSupported {
+            if c.automaticallyAdjustsVideoMirroring { c.automaticallyAdjustsVideoMirroring = false }
+            if c.isVideoMirrored != mirrored { c.isVideoMirrored = mirrored }
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        applyConnection()
+    }
+
+    deinit { timer?.invalidate() }
 }
 
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
+    let mirrored: Bool
 
     func makeUIView(context: Context) -> PreviewView {
         let v = PreviewView()
@@ -20,7 +46,8 @@ struct CameraPreview: UIViewRepresentable {
     }
 
     func updateUIView(_ v: PreviewView, context: Context) {
-        if let c = v.previewLayer.connection, c.isVideoRotationAngleSupported(90) { c.videoRotationAngle = 90 }
+        v.mirrored = mirrored
+        v.applyConnection()
     }
 }
 
@@ -45,8 +72,11 @@ struct ScriptView: UIViewRepresentable {
     let version: Int          // cambia cuando cambia el texto del guion
     let pos: Int
     let fontSize: CGFloat
-    let centered: Bool
-    let mirrored: Bool
+    let alignment: String     // "left" | "center" | "right"
+    let fontStyle: String     // "normal" | "rounded" | "serif"
+    let mirrorH: Bool
+    let mirrorV: Bool
+    let readAtTop: Bool       // la palabra actual va a la primera línea (como la web) o al primer tercio
     let autoScroll: Bool
     let speed: Double
     let onTap: (Int) -> Void
@@ -90,24 +120,29 @@ struct ScriptView: UIViewRepresentable {
         private var link: CADisplayLink?
         private var lastTick: CFTimeInterval = 0
         private let dim = UIColor.white.withAlphaComponent(0.35)
+        private var lastReadAtTop = true
 
         init(_ p: ScriptView) { parent = p }
 
         func update(_ p: ScriptView) {
             parent = p
-            let key = "\(p.version)|\(p.fontSize)|\(p.centered)"
+            let key = "\(p.version)|\(p.fontSize)|\(p.alignment)|\(p.fontStyle)"
             if key != builtKey {
                 build()
                 builtKey = key
                 shownPos = -1
             }
+            let lineChanged = p.readAtTop != lastReadAtTop
+            lastReadAtTop = p.readAtTop
             if p.pos != shownPos {
                 recolor(from: shownPos, to: p.pos)
                 let first = shownPos < 0
                 shownPos = p.pos
                 if link == nil { scrollToCurrent(animated: !first) }
+            } else if lineChanged && link == nil {
+                scrollToCurrent(animated: true)
             }
-            tv?.transform = p.mirrored ? CGAffineTransform(scaleX: -1, y: 1) : .identity
+            tv?.transform = CGAffineTransform(scaleX: p.mirrorH ? -1 : 1, y: p.mirrorV ? -1 : 1)
             if p.autoScroll && link == nil {
                 lastTick = 0
                 let l = CADisplayLink(target: self, selector: #selector(tick(_:)))
@@ -121,9 +156,11 @@ struct ScriptView: UIViewRepresentable {
         }
 
         private func build() {
-            let font = UIFont.systemFont(ofSize: parent.fontSize, weight: .semibold)
+            var font = UIFont.systemFont(ofSize: parent.fontSize, weight: .semibold)
+            let design: UIFontDescriptor.SystemDesign? = parent.fontStyle == "rounded" ? .rounded : parent.fontStyle == "serif" ? .serif : nil
+            if let ds = design, let fd = font.fontDescriptor.withDesign(ds) { font = UIFont(descriptor: fd, size: parent.fontSize) }
             let para = NSMutableParagraphStyle()
-            para.alignment = parent.centered ? .center : .natural
+            para.alignment = parent.alignment == "center" ? .center : parent.alignment == "right" ? .right : .left
             para.lineSpacing = parent.fontSize * 0.25
             let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.white, .paragraphStyle: para]
             let s = NSMutableAttributedString()
@@ -159,14 +196,17 @@ struct ScriptView: UIViewRepresentable {
             if link == nil { scrollToCurrent(animated: false) }
         }
 
-        /// Pone la palabra actual en el primer tercio del recuadro (línea de lectura).
+        /// Lleva la línea de la palabra actual a la parte de arriba del recuadro (como la web),
+        /// o al primer tercio si se eligió así, para ver también la línea anterior.
         private func scrollToCurrent(animated: Bool) {
             guard let tv = tv, !ranges.isEmpty, tv.bounds.height > 0 else { return }
             let r = ranges[min(max(shownPos, 0), ranges.count - 1)]
             layout.ensureLayout(for: container)
             let glyphs = layout.glyphRange(forCharacterRange: r, actualCharacterRange: nil)
             let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
-            var y = rect.minY + tv.textContainerInset.top - tv.bounds.height * 0.22
+            let margin = parent.readAtTop ? parent.fontSize * 0.2 : tv.bounds.height * 0.22
+            // La línea queda a (margen superior del texto + margin) del borde de arriba del recuadro.
+            var y = rect.minY - margin
             let used = layout.usedRect(for: container).height + tv.textContainerInset.top + tv.textContainerInset.bottom
             let maxY = max(0, max(tv.contentSize.height, used) - tv.bounds.height)
             y = min(max(0, y), maxY)
