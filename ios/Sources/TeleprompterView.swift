@@ -8,15 +8,20 @@ final class PrompterModel: ObservableObject {
     let speech = SpeechFollower()
 
     @Published var tokens: [ScriptToken] = []
+    @Published var version = 0
     @Published var pos = 0
+    @Published var total = 0
     @Published var recording = false
     @Published var rehearsing = false
+    @Published var countdown = 0
     @Published var elapsed: TimeInterval = 0
+    @Published var heard = ""
     @Published var toast: String?
     @Published var saving = false
 
     private var tracker: Tracker?
     private var timer: Timer?
+    private var countTimer: Timer?
     private var startDate: Date?
     private var bag = Set<AnyCancellable>()
     private var toastWork: DispatchWorkItem?
@@ -25,23 +30,25 @@ final class PrompterModel: ObservableObject {
     var settings: AppSettings?
 
     init() {
-        camera.objectWillChange.sink { [weak self] _ in DispatchQueue.main.async { self?.objectWillChange.send() } }.store(in: &bag)
         camera.$problem.compactMap { $0 }.receive(on: DispatchQueue.main).sink { [weak self] m in self?.show(m) }.store(in: &bag)
         camera.onAudioBuffer = { [weak self] sb in self?.speech.append(sb) }
-        speech.onWords = { [weak self] words, fin in self?.apply(words, fin) }
+        speech.onText = { [weak self] text, fin in self?.apply(text, fin) }
         speech.onRestart = { [weak self] in self?.tracker?.resetSession() }
         speech.onProblem = { [weak self] m in self?.show(m) }
     }
 
     var active: Bool { recording || rehearsing }
+    var following: Bool { active && settings?.scrollMode == "voice" }
 
     func load(_ s: Script) {
         scriptID = s.id
         tokens = TextNorm.tokenize(s.text)
         let norms = tokens.filter { $0.index >= 0 }.map { $0.norm }
-        let t = Tracker(norms: norms, start: s.pos)
+        let t = Tracker(norms: norms, start: s.pos >= norms.count ? 0 : s.pos)
         tracker = t
+        total = norms.count
         pos = t.pos
+        version += 1
     }
 
     func cameraConfig() -> CameraController.Config {
@@ -58,11 +65,19 @@ final class PrompterModel: ObservableObject {
     }
 
     func applyCameraSettings() {
-        guard !recording else { show("Detén la grabación para cambiar la cámara"); return }
+        guard !recording && countdown == 0 else { show("Detén la grabación para cambiar la cámara"); return }
+        camera.start(cameraConfig())
+    }
+
+    func flipCamera() {
+        guard let st = settings else { return }
+        guard !recording && countdown == 0 else { show("No se puede cambiar de cámara grabando"); return }
+        st.front.toggle()
         camera.start(cameraConfig())
     }
 
     func shutdown() {
+        cancelCountdown()
         rehearsing = false
         if recording { stopRecording() }
         speech.stop()
@@ -73,24 +88,27 @@ final class PrompterModel: ObservableObject {
     // MARK: voz
 
     func syncFollow() {
-        let wantVoice = active && settings?.scrollMode == "voice"
-        if wantVoice && !speech.isActive {
+        if following && !speech.isActive {
             SpeechFollower.authorize { [weak self] ok in
                 guard let self = self else { return }
                 guard ok else { self.show("Permite el reconocimiento de voz en Ajustes › Teleprompter"); return }
-                guard self.active else { return }
+                guard self.following, !self.speech.isActive else { return }
                 self.tracker?.resetSession()
+                self.heard = ""
                 self.speech.start(locale: self.settings?.language ?? "es-CO")
             }
-        } else if !wantVoice {
+        } else if !following && speech.isActive {
             speech.stop()
+            heard = ""
         }
-        UIApplication.shared.isIdleTimerDisabled = true
     }
 
-    private func apply(_ words: [String], _ fin: Bool) {
+    private func apply(_ text: String, _ fin: Bool) {
         guard let t = tracker else { return }
-        let p = t.update(TextNorm.speechWords(words.joined(separator: " ")), isFinal: fin)
+        let words = TextNorm.speechWords(text)
+        let shown = text.split(separator: " ").suffix(6).joined(separator: " ")
+        if shown != heard { heard = shown }
+        let p = t.update(words, isFinal: fin)
         if p > pos { pos = p; savePos() }
     }
 
@@ -107,17 +125,37 @@ final class PrompterModel: ObservableObject {
     }
 
     func toggleRehearse() {
-        guard !recording else { return }
+        guard !recording && countdown == 0 else { return }
         rehearsing.toggle()
         syncFollow()
     }
 
     // MARK: grabación
 
-    func toggleRecord() { recording ? stopRecording() : startRecording() }
+    /// Botón rojo: empieza (con cuenta regresiva si está activada), cancela la cuenta o detiene.
+    func recordButton() {
+        if recording { stopRecording(); return }
+        if countdown > 0 { cancelCountdown(); return }
+        guard camera.running else { show("La cámara aún no está lista"); return }
+        if settings?.countdown ?? true {
+            countdown = 3
+            countTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] t in
+                guard let self = self else { t.invalidate(); return }
+                self.countdown -= 1
+                if self.countdown <= 0 { t.invalidate(); self.countTimer = nil; self.startRecording() }
+            }
+        } else {
+            startRecording()
+        }
+    }
+
+    private func cancelCountdown() {
+        countTimer?.invalidate(); countTimer = nil
+        countdown = 0
+    }
 
     private func startRecording() {
-        guard camera.running else { show("La cámara aún no está lista"); return }
+        countdown = 0
         camera.startRecording()
         recording = true
         rehearsing = false
@@ -127,10 +165,12 @@ final class PrompterModel: ObservableObject {
             guard let self = self, let d = self.startDate else { return }
             self.elapsed = Date().timeIntervalSince(d)
         }
+        UIApplication.shared.isIdleTimerDisabled = true
         syncFollow()
     }
 
-    private func stopRecording() {
+    func stopRecording() {
+        guard recording else { return }
         recording = false
         timer?.invalidate(); timer = nil
         syncFollow()
@@ -161,11 +201,57 @@ final class PrompterModel: ObservableObject {
     }
 }
 
+/// Medidor del micrófono (se actualiza solo, sin redibujar la pantalla entera).
+struct MicMeter: View {
+    @ObservedObject var camera: CameraController
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(0..<8, id: \.self) { i in
+                Capsule()
+                    .fill(Float(i) / 8 < camera.micLevel ? Color.green : Color.white.opacity(0.25))
+                    .frame(width: 3, height: 6 + CGFloat(i) * 1.6)
+            }
+        }
+        .animation(.linear(duration: 0.08), value: camera.micLevel)
+    }
+}
+
+/// Lo que de verdad está grabando la cámara: resolución, fps, códec y micrófono.
+struct CameraStatus: View {
+    @ObservedObject var camera: CameraController
+    var body: some View {
+        Text(camera.statusText.isEmpty ? "Iniciando cámara…" : camera.statusText)
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+    }
+}
+
+/// Cuadrícula de tercios para encuadrar.
+struct GridOverlay: View {
+    var body: some View {
+        GeometryReader { g in
+            Path { p in
+                for i in 1...2 {
+                    let x = g.size.width * CGFloat(i) / 3, y = g.size.height * CGFloat(i) / 3
+                    p.move(to: CGPoint(x: x, y: 0)); p.addLine(to: CGPoint(x: x, y: g.size.height))
+                    p.move(to: CGPoint(x: 0, y: y)); p.addLine(to: CGPoint(x: g.size.width, y: y))
+                }
+            }
+            .stroke(Color.white.opacity(0.35), lineWidth: 0.7)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 struct TeleprompterView: View {
     let scriptID: UUID
     @EnvironmentObject var store: ScriptStore
     @EnvironmentObject var settings: AppSettings
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var phase
     @StateObject private var model = PrompterModel()
     @State private var showText = false
     @State private var showCamera = false
@@ -174,18 +260,22 @@ struct TeleprompterView: View {
     var body: some View {
         ZStack {
             CameraPreview(session: model.camera.session).ignoresSafeArea()
+            if settings.showGrid { GridOverlay().ignoresSafeArea() }
 
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
                 topBar
-                ScriptView(tokens: model.tokens, pos: model.pos, fontSize: CGFloat(settings.fontSize), centered: settings.centered,
-                           mirrored: settings.mirrorText, autoScroll: model.active && settings.scrollMode == "auto",
-                           speed: settings.speed, onTap: { model.tap($0) })
-                    .frame(height: CGFloat(settings.boxHeight))
-                    .background(Color.black.opacity(settings.bgOpacity))
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .padding(.horizontal, 12)
+                scriptBox
                 Spacer()
                 bottomPanel
+            }
+
+            if model.countdown > 0 {
+                Text("\(model.countdown)")
+                    .font(.system(size: 120, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .shadow(radius: 12)
+                    .transition(.scale.combined(with: .opacity))
+                    .id(model.countdown)
             }
 
             if let t = model.toast {
@@ -199,6 +289,7 @@ struct TeleprompterView: View {
                 .transition(.opacity)
             }
         }
+        .animation(.easeOut(duration: 0.25), value: model.countdown)
         .preferredColorScheme(.dark)
         .onAppear {
             model.store = store
@@ -208,6 +299,10 @@ struct TeleprompterView: View {
             UIApplication.shared.isIdleTimerDisabled = true
         }
         .onDisappear { model.shutdown() }
+        .onChange(of: phase) { _, p in
+            // Si sales de la app grabando, se detiene y se guarda (en segundo plano iOS apaga la cámara).
+            if p != .active && model.recording { model.stopRecording() }
+        }
         .sheet(isPresented: $showText) {
             TextSettingsView().environmentObject(settings).presentationDetents([.medium, .large])
         }
@@ -219,25 +314,62 @@ struct TeleprompterView: View {
         }
     }
 
+    private var scriptBox: some View {
+        VStack(spacing: 0) {
+            ScriptView(tokens: model.tokens, version: model.version, pos: model.pos, fontSize: CGFloat(settings.fontSize),
+                       centered: settings.centered, mirrored: settings.mirrorText,
+                       autoScroll: model.active && settings.scrollMode == "auto", speed: settings.speed,
+                       onTap: { model.tap($0) })
+            HStack(spacing: 8) {
+                MicMeter(camera: model.camera)
+                if model.following {
+                    Text(model.heard.isEmpty ? "Escuchando… empieza a leer" : model.heard)
+                        .lineLimit(1).truncationMode(.head)
+                } else if settings.scrollMode == "voice" {
+                    Text("Toca ▶ Probar o ● Grabar y el guion seguirá tu voz")
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                } else {
+                    Text(model.active ? "Velocidad automática" : "Toca ▶ Probar o ● Grabar para que avance")
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                }
+                Spacer(minLength: 4)
+                if model.total > 0 { Text("\(Int(Double(model.pos) / Double(model.total) * 100))%").monospacedDigit() }
+            }
+            .font(.caption)
+            .foregroundStyle(.white.opacity(0.75))
+            .padding(.horizontal, 14).padding(.vertical, 7)
+            .background(Color.black.opacity(0.25))
+        }
+        .frame(height: CGFloat(settings.boxHeight))
+        .background(Color.black.opacity(settings.bgOpacity))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(.horizontal, 10)
+    }
+
     private var topBar: some View {
-        HStack {
+        HStack(spacing: 10) {
             circleButton("xmark") {
-                if model.recording { model.toggleRecord() }
+                if model.recording { model.stopRecording() }
                 dismiss()
             }
+            circleButton("arrow.triangle.2.circlepath.camera") { model.flipCamera() }
             Spacer()
-            Text(timeString(model.elapsed))
-                .font(.system(.headline, design: .monospaced))
-                .padding(.horizontal, 14).padding(.vertical, 8)
-                .background(model.recording ? Color.red : Color.black.opacity(0.45), in: Capsule())
+            HStack(spacing: 6) {
+                if model.recording { Circle().fill(Color.white).frame(width: 8, height: 8) }
+                Text(timeString(model.elapsed)).font(.system(.headline, design: .monospaced))
+            }
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .background(model.recording ? Color.red : Color.black.opacity(0.45), in: Capsule())
             Spacer()
+            circleButton("arrow.counterclockwise") { model.restart() }
+                .disabled(model.recording)
             circleButton("doc.text") {
                 if model.recording { model.show("Detén la grabación para editar"); return }
                 editing = store.script(scriptID)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 6)
+        .padding(.horizontal, 14)
+        .padding(.top, 4)
     }
 
     private var bottomPanel: some View {
@@ -258,21 +390,15 @@ struct TeleprompterView: View {
             }
 
             HStack {
-                Button(model.rehearsing ? "■ Detener" : "▶ Probar") { model.toggleRehearse() }
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(model.rehearsing ? Color.accentColor : Color.white.opacity(0.15), in: Capsule())
-                    .disabled(model.recording)
-                Spacer()
-                Button("Volver al inicio") { model.restart() }
-                    .font(.subheadline)
-                    .disabled(model.recording)
-            }
-
-            HStack {
                 circleButton("textformat.size", size: 54) { showText = true }
                 Spacer()
-                Button { model.toggleRecord() } label: {
+                Button(model.rehearsing ? "■ Detener" : "▶ Probar") { model.toggleRehearse() }
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(model.rehearsing ? Color.accentColor : Color.white.opacity(0.15), in: Capsule())
+                    .disabled(model.recording || model.countdown > 0)
+                Spacer()
+                Button { model.recordButton() } label: {
                     ZStack {
                         Circle().stroke(Color.white, lineWidth: 4).frame(width: 78, height: 78)
                         RoundedRectangle(cornerRadius: model.recording ? 8 : 32, style: .continuous)
@@ -283,17 +409,19 @@ struct TeleprompterView: View {
                 }
                 .disabled(model.saving)
                 Spacer()
+                Color.clear.frame(width: 70, height: 1)
+                Spacer()
                 circleButton("camera", size: 54) {
                     if model.recording { model.show("Detén la grabación para cambiar la cámara"); return }
                     showCamera = true
                 }
             }
 
-            Text(model.saving ? "Guardando en Fotos…" : model.camera.statusText)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            if model.saving {
+                Text("Guardando en Fotos…").font(.caption2).foregroundStyle(.secondary)
+            } else {
+                CameraStatus(camera: model.camera)
+            }
         }
         .padding(16)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
@@ -301,7 +429,7 @@ struct TeleprompterView: View {
         .padding(.bottom, 6)
     }
 
-    private func circleButton(_ icon: String, size: CGFloat = 44, action: @escaping () -> Void) -> some View {
+    private func circleButton(_ icon: String, size: CGFloat = 42, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: size * 0.4, weight: .semibold))

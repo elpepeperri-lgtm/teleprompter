@@ -92,6 +92,8 @@ final class AppSettings: ObservableObject {
     @Published var resolution: String { didSet { d.set(resolution, forKey: "resolution") } }  // "1080" | "4k"
     @Published var fps: Int { didSet { d.set(fps, forKey: "fps") } }
     @Published var quality: String { didSet { d.set(quality, forKey: "quality") } }           // "max" | "high"
+    @Published var countdown: Bool { didSet { d.set(countdown, forKey: "countdown") } }       // 3-2-1 antes de grabar
+    @Published var showGrid: Bool { didSet { d.set(showGrid, forKey: "showGrid") } }
 
     init() {
         fontSize = d.object(forKey: "fontSize") as? Double ?? 34
@@ -106,6 +108,8 @@ final class AppSettings: ObservableObject {
         resolution = d.string(forKey: "resolution") ?? "1080"
         fps = d.object(forKey: "fps") as? Int ?? 60
         quality = d.string(forKey: "quality") ?? "max"
+        countdown = d.object(forKey: "countdown") as? Bool ?? true
+        showGrid = d.object(forKey: "showGrid") as? Bool ?? false
     }
 
     /// Bitrate HEVC en bits/s. "Máxima" ≈ lo que graba la app Cámara (o un poco más).

@@ -37,6 +37,9 @@ final class CameraController: NSObject, ObservableObject {
     @Published var inputs: [AVAudioSessionPortDescription] = []
     @Published var currentInputUID = ""
     @Published var problem: String?
+    /// Nivel del micrófono (0…1), unas 12 veces por segundo, para el medidor.
+    @Published var micLevel: Float = 0
+    private var lastLevelTime: CFTimeInterval = 0
 
     override init() {
         super.init()
@@ -287,7 +290,15 @@ final class CameraController: NSObject, ObservableObject {
 extension CameraController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         let isVideo = output === videoOut
-        if !isVideo { onAudioBuffer?(sampleBuffer) }
+        if !isVideo {
+            onAudioBuffer?(sampleBuffer)
+            let now = CACurrentMediaTime()
+            if now - lastLevelTime > 0.08, let ch = connection.audioChannels.first {
+                lastLevelTime = now
+                let level = max(0, min(1, (ch.averagePowerLevel + 50) / 50))   // -50 dB … 0 dB
+                DispatchQueue.main.async { self.micLevel = level }
+            }
+        }
         guard wantRecord else { return }
         if isVideo {
             if writer == nil { setupWriter(sampleBuffer) }

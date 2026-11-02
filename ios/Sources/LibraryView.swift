@@ -248,6 +248,8 @@ struct CameraSettingsView: View {
                     .pickerStyle(.segmented)
                     Text("≈ \(Int(Double(settings.bitrate) * 60 / 8 / 1_048_576)) MB por minuto · HEVC (formato de la cámara del iPhone)")
                         .font(.footnote).foregroundStyle(.secondary)
+                    Toggle("Cuenta regresiva de 3 s al grabar", isOn: $settings.countdown)
+                    Toggle("Cuadrícula para encuadrar", isOn: $settings.showGrid)
                 }
                 Section("Micrófono") {
                     if camera.inputs.isEmpty {
