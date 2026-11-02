@@ -320,30 +320,52 @@ struct TeleprompterView: View {
                        centered: settings.centered, mirrored: settings.mirrorText,
                        autoScroll: model.active && settings.scrollMode == "auto", speed: settings.speed,
                        onTap: { model.tap($0) })
-            HStack(spacing: 8) {
-                MicMeter(camera: model.camera)
-                if model.following {
-                    Text(model.heard.isEmpty ? "Escuchando… empieza a leer" : model.heard)
-                        .lineLimit(1).truncationMode(.head)
-                } else if settings.scrollMode == "voice" {
-                    Text("Toca ▶ Probar o ● Grabar y el guion seguirá tu voz")
-                        .lineLimit(1).minimumScaleFactor(0.7)
-                } else {
-                    Text(model.active ? "Velocidad automática" : "Toca ▶ Probar o ● Grabar para que avance")
-                        .lineLimit(1).minimumScaleFactor(0.7)
-                }
-                Spacer(minLength: 4)
-                if model.total > 0 { Text("\(Int(Double(model.pos) / Double(model.total) * 100))%").monospacedDigit() }
-            }
-            .font(.caption)
-            .foregroundStyle(.white.opacity(0.75))
-            .padding(.horizontal, 14).padding(.vertical, 7)
-            .background(Color.black.opacity(0.25))
+            captionBar
         }
         .frame(height: CGFloat(settings.boxHeight))
         .background(Color.black.opacity(settings.bgOpacity))
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .padding(.horizontal, 10)
+    }
+
+    /// Debajo del guion: medidor del micrófono, lo que se está escuchando y el avance.
+    private var captionBar: some View {
+        HStack(spacing: 8) {
+            MicMeter(camera: model.camera)
+            Text(captionText)
+                .lineLimit(1)
+                .truncationMode(.head)
+                .minimumScaleFactor(0.7)
+            Spacer(minLength: 4)
+            Text(progressText).monospacedDigit()
+        }
+        .font(.caption)
+        .foregroundStyle(Color.white.opacity(0.75))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .background(Color.black.opacity(0.25))
+    }
+
+    private var captionText: String {
+        if model.following { return model.heard.isEmpty ? "Escuchando… empieza a leer" : model.heard }
+        if settings.scrollMode == "voice" { return "Toca ▶ Probar o ● Grabar y el guion seguirá tu voz" }
+        return model.active ? "Velocidad automática" : "Toca ▶ Probar o ● Grabar para que avance"
+    }
+
+    private var progressText: String {
+        guard model.total > 0 else { return "" }
+        return "\(Int(Double(model.pos) / Double(model.total) * 100))%"
+    }
+
+    private var timerChip: some View {
+        let bg: Color = model.recording ? Color.red : Color.black.opacity(0.45)
+        return HStack(spacing: 6) {
+            if model.recording { Circle().fill(Color.white).frame(width: 8, height: 8) }
+            Text(timeString(model.elapsed)).font(.system(.headline, design: .monospaced))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(bg, in: Capsule())
     }
 
     private var topBar: some View {
@@ -354,12 +376,7 @@ struct TeleprompterView: View {
             }
             circleButton("arrow.triangle.2.circlepath.camera") { model.flipCamera() }
             Spacer()
-            HStack(spacing: 6) {
-                if model.recording { Circle().fill(Color.white).frame(width: 8, height: 8) }
-                Text(timeString(model.elapsed)).font(.system(.headline, design: .monospaced))
-            }
-            .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(model.recording ? Color.red : Color.black.opacity(0.45), in: Capsule())
+            timerChip
             Spacer()
             circleButton("arrow.counterclockwise") { model.restart() }
                 .disabled(model.recording)
@@ -374,59 +391,84 @@ struct TeleprompterView: View {
 
     private var bottomPanel: some View {
         VStack(spacing: 12) {
-            Picker("Desplazamiento", selection: $settings.scrollMode) {
-                Text("Seguir mi voz").tag("voice")
-                Text("Velocidad automática").tag("auto")
-            }
-            .pickerStyle(.segmented)
-            .onChange(of: settings.scrollMode) { _, _ in model.syncFollow() }
-
-            if settings.scrollMode == "auto" {
-                HStack {
-                    Image(systemName: "tortoise")
-                    Slider(value: $settings.speed, in: 10...150, step: 5)
-                    Image(systemName: "hare")
-                }
-            }
-
-            HStack {
-                circleButton("textformat.size", size: 54) { showText = true }
-                Spacer()
-                Button(model.rehearsing ? "■ Detener" : "▶ Probar") { model.toggleRehearse() }
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(model.rehearsing ? Color.accentColor : Color.white.opacity(0.15), in: Capsule())
-                    .disabled(model.recording || model.countdown > 0)
-                Spacer()
-                Button { model.recordButton() } label: {
-                    ZStack {
-                        Circle().stroke(Color.white, lineWidth: 4).frame(width: 78, height: 78)
-                        RoundedRectangle(cornerRadius: model.recording ? 8 : 32, style: .continuous)
-                            .fill(Color.red)
-                            .frame(width: model.recording ? 32 : 64, height: model.recording ? 32 : 64)
-                            .animation(.easeInOut(duration: 0.2), value: model.recording)
-                    }
-                }
-                .disabled(model.saving)
-                Spacer()
-                Color.clear.frame(width: 70, height: 1)
-                Spacer()
-                circleButton("camera", size: 54) {
-                    if model.recording { model.show("Detén la grabación para cambiar la cámara"); return }
-                    showCamera = true
-                }
-            }
-
-            if model.saving {
-                Text("Guardando en Fotos…").font(.caption2).foregroundStyle(.secondary)
-            } else {
-                CameraStatus(camera: model.camera)
-            }
+            modePicker
+            if settings.scrollMode == "auto" { speedSlider }
+            controlsRow
+            statusLine
         }
         .padding(16)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
         .padding(.horizontal, 10)
         .padding(.bottom, 6)
+    }
+
+    private var modePicker: some View {
+        Picker("Desplazamiento", selection: $settings.scrollMode) {
+            Text("Seguir mi voz").tag("voice")
+            Text("Velocidad automática").tag("auto")
+        }
+        .pickerStyle(.segmented)
+        .onChange(of: settings.scrollMode) { _, _ in model.syncFollow() }
+    }
+
+    private var speedSlider: some View {
+        HStack {
+            Image(systemName: "tortoise")
+            Slider(value: $settings.speed, in: 10...150, step: 5)
+            Image(systemName: "hare")
+        }
+    }
+
+    private var controlsRow: some View {
+        HStack {
+            circleButton("textformat.size", size: 54) { showText = true }
+            Spacer()
+            rehearseButton
+            Spacer()
+            recordButton
+            Spacer()
+            Color.clear.frame(width: 70, height: 1)
+            Spacer()
+            circleButton("camera", size: 54) {
+                if model.recording { model.show("Detén la grabación para cambiar la cámara"); return }
+                showCamera = true
+            }
+        }
+    }
+
+    private var rehearseButton: some View {
+        let on = model.rehearsing
+        let bg: Color = on ? Color.accentColor : Color.white.opacity(0.15)
+        return Button(on ? "■ Detener" : "▶ Probar") { model.toggleRehearse() }
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(bg, in: Capsule())
+            .disabled(model.recording || model.countdown > 0)
+    }
+
+    private var recordButton: some View {
+        let rec = model.recording
+        let side: CGFloat = rec ? 32 : 64
+        let radius: CGFloat = rec ? 8 : 32
+        return Button { model.recordButton() } label: {
+            ZStack {
+                Circle().stroke(Color.white, lineWidth: 4).frame(width: 78, height: 78)
+                RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .fill(Color.red)
+                    .frame(width: side, height: side)
+                    .animation(.easeInOut(duration: 0.2), value: rec)
+            }
+        }
+        .disabled(model.saving)
+    }
+
+    @ViewBuilder private var statusLine: some View {
+        if model.saving {
+            Text("Guardando en Fotos…").font(.caption2).foregroundStyle(.secondary)
+        } else {
+            CameraStatus(camera: model.camera)
+        }
     }
 
     private func circleButton(_ icon: String, size: CGFloat = 42, action: @escaping () -> Void) -> some View {
