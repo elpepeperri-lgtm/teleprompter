@@ -49,6 +49,30 @@ do {
     check(t.pos == 2, "una palabra suelta lejana no salta", "pos \(t.pos)")
 }
 
+// Una frase ya leída que se repite más adelante no justifica saltar allá por una palabra nueva.
+do {
+    var script = distinct(100)
+    for k in 0..<6 { script[80 + k] = script[10 + k] }
+    let t = Tracker(norms: script)
+    var heard: [String] = []
+    say(t, Array(script[0..<16]), into: &heard)
+    say(t, [script[86]], into: &heard)
+    check(t.pos == 16, "lo ya leído no cuenta para saltar", "pos \(t.pos)")
+}
+
+// Tras perder audio, si la frase existe dos veces, va a la copia más cercana.
+do {
+    var script = distinct(120)
+    for k in 0..<6 { script[100 + k] = script[40 + k] }
+    let t = Tracker(norms: script)
+    var heard: [String] = []
+    say(t, Array(script[0..<5]), into: &heard)
+    t.resetSession()
+    heard = []
+    say(t, Array(script[40..<46]), into: &heard)
+    check(t.pos == 46, "entre dos copias gana la más cercana", "pos \(t.pos)")
+}
+
 // Apple vacía la transcripción tras una pausa, sin avisar: el guion sigue.
 do {
     let script = distinct(60)

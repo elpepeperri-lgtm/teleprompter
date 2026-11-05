@@ -63,11 +63,14 @@ final class Tracker {
     private let gapHeard = 0.35       // costo de una palabra oída que no está en el guion
     private let gapScript = 0.15      // costo de una palabra del guion que no se oyó
     private let backRun = 5           // palabras seguidas necesarias para retroceder
+    private let nearTolerance = 1.4   // cuánto peor puede encajar lo nuevo en un sitio cercano y aun así preferirlo
 
     private var carry: [String] = []  // últimas palabras de la sesión anterior del reconocedor
     private var recent: [String] = []
     private var skip = 0              // palabras de la sesión actual que ya no cuentan (tras un toque)
     private var lastLen = 0
+    private var prev: [String] = []   // transcripción anterior, para saber qué palabras son nuevas
+    private var fresh = 0             // palabras oídas desde el último avance: las únicas que justifican moverse
     private var rows: [String: [Double]] = [:]
 
     init(norms: [String], start: Int = 0) {
@@ -153,10 +156,14 @@ final class Tracker {
         return evidence >= 4 && run >= 4
     }
 
+    /// Entre dos sitios iguales gana el más cercano.
+    private func distancePenalty(_ d: Int) -> Double { min(1.5, 0.04 * Double(d)) }
+
     /// Alinea las últimas palabras oídas con el guion, conservando el orden de ambos.
     private func align(_ tail: [String], tentative: Bool) {
         let lo = max(0, pos - back), hi = min(norms.count, pos + ahead), cols = hi - lo
         guard cols > 0 else { return }
+        let freshFrom = tail.count - fresh
         var pH = [Double](repeating: 0, count: cols + 1), pE = pH, pR = [Int](repeating: 0, count: cols + 1)
         var cH = pH, cE = pH, cR = pR
         for (i, r) in tail.enumerated() {
@@ -167,7 +174,7 @@ final class Tracker {
                 var h = 0.0, e = 0.0, q = 0
                 if m > 0 {
                     h = pH[c - 1] + m
-                    e = pE[c - 1] + (j >= pos ? m : 0)
+                    e = pE[c - 1] + (j >= pos && i >= freshFrom ? m : 0)
                     q = pR[c - 1] + 1
                 }
                 let up = pH[c] - gapHeard
@@ -187,7 +194,7 @@ final class Tracker {
             var s = pH[c]
             if d > 0 {
                 guard enough(d, pE[c], pR[c]) else { continue }
-                s -= min(1.5, 0.04 * Double(d))              // entre dos sitios iguales gana el más cercano
+                s -= distancePenalty(d)
             } else if d < -2 {
                 guard pR[c] >= backRun else { continue }
                 s -= 1
@@ -196,7 +203,21 @@ final class Tracker {
             }
             if s > bestScore { bestScore = s; best = lo + c }
         }
-        if best >= 0 { pos = best }
+        // Si lo nuevo también encaja más cerca, gana ese sitio; si allí aún falta prueba, se espera a la
+        // siguiente palabra. Quedarse corto se corrige solo al seguir leyendo; pasarse no.
+        if best > pos {
+            let need = max(0.01, pE[best - lo] - nearTolerance)
+            var c = pos - lo + 1
+            while c <= cols {
+                let d = lo + c - pos
+                if pE[c] >= need && pH[c] - distancePenalty(d) > stay {
+                    best = enough(d, pE[c], pR[c]) ? lo + c : -1
+                    break
+                }
+                c += 1
+            }
+        }
+        if best >= 0 { pos = best; fresh = 0 }
     }
 
     /// words: lista completa (normalizada) de la sesión de reconocimiento actual.
@@ -204,7 +225,11 @@ final class Tracker {
     func update(_ words: [String], isFinal: Bool) -> Int {
         let n = words.count
         // Tras una pausa Apple puede vaciar la transcripción sin cerrar la sesión: es como una sesión nueva.
-        if n + 3 < lastLen { carry = recent; skip = 0 }
+        if n + 3 < lastLen { carry = recent; skip = 0; prev = [] }
+        var same = 0
+        while same < n && same < prev.count && prev[same] == words[same] { same += 1 }
+        fresh = max(0, fresh - (prev.count - same)) + n - same
+        prev = words
         skip = min(skip, n)
         lastLen = n
         let tail = Array((carry + words[skip...]).suffix(tailSize))
@@ -213,7 +238,7 @@ final class Tracker {
         return pos
     }
 
-    func resetSession() { carry = recent; skip = 0; lastLen = 0 }
+    func resetSession() { carry = recent; skip = 0; lastLen = 0; prev = [] }
 
     /// Salto manual (toque en una palabra); puede ir hacia atrás. Lo oído antes del toque deja de contar.
     func setPos(_ p: Int) {
@@ -221,5 +246,6 @@ final class Tracker {
         carry = []
         recent = []
         skip = lastLen
+        fresh = 0
     }
 }
