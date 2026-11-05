@@ -45,24 +45,45 @@ enum TextNorm {
     }
 }
 
-/// Sigue la posición en el guion a partir de lo que se va reconociendo. Nunca retrocede sola.
+/// Sigue la posición en el guion comparando las últimas palabras oídas, en orden, con el texto.
+/// Una palabra suelta solo avanza a la siguiente: para saltar hace falta una secuencia de palabras seguidas,
+/// así las palabras repetidas no mueven el guion. Cada actualización se calcula desde cero con esas últimas
+/// palabras, de modo que un reinicio del reconocedor o un trozo de audio perdido no deja el guion atascado.
 final class Tracker {
     let norms: [String]
-    private let phons: [String]
-    private let window = 15
+    private let ids: [Int]            // palabra del guion -> índice en vocab
+    private let vocab: [String]
+    private let vocabPhons: [String]
+    private let weights: [Double]
     private(set) var pos: Int
-    // El reconocedor revisa sus resultados parciales; cada actualización se alinea de nuevo desde el inicio
-    // de la frase en curso (basePos), así una palabra repetida no se cuenta dos veces.
-    private var basePos: Int
-    private var cBase = 0
+
+    private let tailSize = 8          // palabras oídas que se comparan
+    private let back = 150            // hasta dónde se busca hacia atrás…
+    private let ahead = 800           // …y hacia adelante
+    private let gapHeard = 0.35       // costo de una palabra oída que no está en el guion
+    private let gapScript = 0.15      // costo de una palabra del guion que no se oyó
+    private let backRun = 5           // palabras seguidas necesarias para retroceder
+
+    private var carry: [String] = []  // últimas palabras de la sesión anterior del reconocedor
+    private var recent: [String] = []
+    private var skip = 0              // palabras de la sesión actual que ya no cuentan (tras un toque)
     private var lastLen = 0
+    private var rows: [String: [Double]] = [:]
 
     init(norms: [String], start: Int = 0) {
         self.norms = norms
-        self.phons = norms.map(Tracker.phon)
-        let s = max(0, min(start, norms.count))
-        pos = s
-        basePos = s
+        var seen: [String: Int] = [:], words: [String] = []
+        ids = norms.map { w in
+            if let i = seen[w] { return i }
+            seen[w] = words.count
+            words.append(w)
+            return words.count - 1
+        }
+        vocab = words
+        vocabPhons = words.map(Tracker.phon)
+        // Las palabras cortas (de, la, que…) aparecen en todas partes: cuentan menos como prueba.
+        weights = norms.map { $0.utf8.count <= 2 ? 0.4 : $0.utf8.count == 3 ? 0.6 : 1 }
+        pos = max(0, min(start, norms.count))
     }
 
     var done: Bool { pos >= norms.count }
@@ -96,62 +117,109 @@ final class Tracker {
     private func similarity(_ a: String, _ b: String) -> Double {
         if a == b { return 1 }
         let d = Tracker.lev(Array(a.utf8), Array(b.utf8))
-        return 1 - Double(d) / Double(max(a.count, b.count))
+        return 1 - Double(d) / Double(max(a.utf8.count, b.utf8.count))
     }
 
-    private func score(_ r: String, _ rp: String, _ j: Int, _ dist: Int, _ tentative: Bool) -> Double {
-        let s = norms[j], sl = s.count, rl = r.count
-        if dist > 0 && sl < 3 { return 0 }                 // palabras cortas (de, la, y…) solo en su lugar exacto
-        if dist > 1 && sl < 4 { return 0 }                 // palabras cortas no justifican saltos
-        if r == s { return 1 - 0.04 * Double(dist) }
-        if min(rl, sl) <= 2 { return 0 }
-        var sim = similarity(r, s)
-        if rl >= 3 && rp == phons[j] { sim = max(sim, 0.95) }
-        var minS = max(rl, sl) <= 4 ? 0.75 : 0.7
-        if tentative && rl >= 2 && rl < sl && s.hasPrefix(r) { sim = max(sim, 0.9) }   // palabra a medias
-        if dist > 2 {
-            if sl < 4 { return 0 }
-            minS = 0.8
+    /// Parecido (0…1) de una palabra oída con cada palabra distinta del guion.
+    private func likeness(_ r: String, tentative: Bool) -> [Double] {
+        var row: [Double]
+        if let cached = rows[r] {
+            row = cached
+        } else {
+            let rl = r.utf8.count, rp = Tracker.phon(r)
+            row = vocab.indices.map { v in
+                let s = vocab[v], sl = s.utf8.count
+                if r == s { return 1 }
+                if min(rl, sl) <= 2 { return 0 }
+                var sim = similarity(r, s)
+                if rl >= 3 && rp == vocabPhons[v] { sim = max(sim, 0.95) }
+                return sim >= (max(rl, sl) <= 4 ? 0.75 : 0.7) ? sim : 0
+            }
+            if rows.count > 400 { rows.removeAll() }
+            rows[r] = row
         }
-        return sim >= minS ? sim - 0.04 * Double(dist) : 0
+        if tentative && r.utf8.count >= 3 {                  // palabra a medias
+            for v in vocab.indices where vocab[v].utf8.count > r.utf8.count && vocab[v].hasPrefix(r) { row[v] = max(row[v], 0.9) }
+        }
+        return row
     }
 
-    private func find(_ r: String, from: Int, tentative: Bool) -> Int {
-        var best = -1, bestScore = 0.0
-        let end = min(norms.count, from + window), rp = Tracker.phon(r)
-        var j = from
-        while j < end {
-            let sc = score(r, rp, j, j - from, tentative)
-            if sc > bestScore { bestScore = sc; best = j }
-            j += 1
+    /// Prueba necesaria para avanzar d palabras: cuanto más lejos, más palabras seguidas.
+    private func enough(_ d: Int, _ evidence: Double, _ run: Int) -> Bool {
+        if d == 1 { return evidence >= 0.4 }
+        if d <= 3 { return evidence >= 1 }
+        if d <= 8 { return evidence >= 2 }
+        if d <= 30 { return evidence >= 3 && run >= 3 }
+        return evidence >= 4 && run >= 4
+    }
+
+    /// Alinea las últimas palabras oídas con el guion, conservando el orden de ambos.
+    private func align(_ tail: [String], tentative: Bool) {
+        let lo = max(0, pos - back), hi = min(norms.count, pos + ahead), cols = hi - lo
+        guard cols > 0 else { return }
+        var pH = [Double](repeating: 0, count: cols + 1), pE = pH, pR = [Int](repeating: 0, count: cols + 1)
+        var cH = pH, cE = pH, cR = pR
+        for (i, r) in tail.enumerated() {
+            let row = likeness(r, tentative: tentative && i == tail.count - 1)
+            for c in 1...cols {
+                let j = lo + c - 1
+                let m = row[ids[j]] * weights[j]
+                var h = 0.0, e = 0.0, q = 0
+                if m > 0 {
+                    h = pH[c - 1] + m
+                    e = pE[c - 1] + (j >= pos ? m : 0)
+                    q = pR[c - 1] + 1
+                }
+                let up = pH[c] - gapHeard
+                if up > h { h = up; e = pE[c]; q = pR[c] }
+                let left = cH[c - 1] - gapScript
+                if left > h { h = left; e = cE[c - 1]; q = 0 }
+                cH[c] = h; cE[c] = e; cR[c] = q
+            }
+            swap(&pH, &cH); swap(&pE, &cE); swap(&pR, &cR)
         }
-        return best
+        // Si lo oído encaja igual de bien donde ya estamos, no hay nada que mover.
+        var stay = 0.0
+        for c in 0...cols where lo + c >= pos - 2 && lo + c <= pos { stay = max(stay, pH[c]) }
+        var best = -1, bestScore = stay
+        for c in 1...cols {
+            let d = lo + c - pos
+            var s = pH[c]
+            if d > 0 {
+                guard enough(d, pE[c], pR[c]) else { continue }
+                s -= min(1.5, 0.04 * Double(d))              // entre dos sitios iguales gana el más cercano
+            } else if d < -2 {
+                guard pR[c] >= backRun else { continue }
+                s -= 1
+            } else {
+                continue
+            }
+            if s > bestScore { bestScore = s; best = lo + c }
+        }
+        if best >= 0 { pos = best }
     }
 
     /// words: lista completa (normalizada) de la sesión de reconocimiento actual.
     @discardableResult
     func update(_ words: [String], isFinal: Bool) -> Int {
         let n = words.count
-        if n < cBase { cBase = 0; basePos = pos }
-        var p = basePos
-        var i = cBase
-        while i < n {
-            let j = find(words[i], from: p, tentative: !isFinal && i == n - 1)
-            if j >= 0 { p = j + 1 }
-            i += 1
-        }
+        // Tras una pausa Apple puede vaciar la transcripción sin cerrar la sesión: es como una sesión nueva.
+        if n + 3 < lastLen { carry = recent; skip = 0 }
+        skip = min(skip, n)
         lastLen = n
-        if isFinal { cBase = n; basePos = max(p, pos) }
-        if p > pos { pos = p }
+        let tail = Array((carry + words[skip...]).suffix(tailSize))
+        recent = tail
+        if !tail.isEmpty { align(tail, tentative: !isFinal) }
         return pos
     }
 
-    func resetSession() { cBase = 0; lastLen = 0; basePos = pos }
+    func resetSession() { carry = recent; skip = 0; lastLen = 0 }
 
-    /// Salto manual (toque en una palabra); puede ir hacia atrás.
+    /// Salto manual (toque en una palabra); puede ir hacia atrás. Lo oído antes del toque deja de contar.
     func setPos(_ p: Int) {
         pos = max(0, min(p, norms.count))
-        basePos = pos
-        cBase = lastLen
+        carry = []
+        recent = []
+        skip = lastLen
     }
 }

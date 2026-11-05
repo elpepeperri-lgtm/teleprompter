@@ -18,6 +18,12 @@ jobs:
       - name: Versión de Xcode
         run: xcodebuild -version
 
+      - name: Probar el seguimiento del guion
+        working-directory: ios
+        run: |
+          swiftc -O Sources/Tracker.swift Tests/tracker-check/main.swift -o "$RUNNER_TEMP/tracker-check"
+          "$RUNNER_TEMP/tracker-check"
+
       - name: Generar proyecto
         working-directory: ios
         run: |

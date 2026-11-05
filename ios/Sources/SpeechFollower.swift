@@ -15,7 +15,12 @@ final class SpeechFollower {
     private var generation = 0
     private var preferOnDevice = true
     private var failsInARow = 0
+    private var watchdog: Timer?
+    private var voiceSeconds = 0
+    private var lastText = ""
 
+    /// Nivel actual del micrófono (0…1), para notar si se habla y el reconocedor no responde.
+    var micLevel: (() -> Float)?
     /// Texto reconocido en la sesión actual y si es final (en el hilo principal).
     var onText: ((String, Bool) -> Void)?
     /// Empezó una sesión nueva (Apple corta tras silencios o al minuto): la posición se conserva.
@@ -49,12 +54,24 @@ final class SpeechFollower {
         failsInARow = 0
         active = true
         begin()
+        watchdog = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.checkAlive() }
+    }
+
+    /// Si se lleva un rato hablando y no llega texto nuevo, el reconocedor se colgó: se arranca otra vez.
+    private func checkAlive() {
+        guard active else { return }
+        if (micLevel?() ?? 0) > 0.35 { voiceSeconds += 1 }
+        guard voiceSeconds >= 6 else { return }
+        onRestart?()
+        begin()
     }
 
     private func begin() {
         guard active, let r = recognizer else { return }
         generation += 1
         let gen = generation
+        voiceSeconds = 0
+        lastText = ""
         let req = SFSpeechAudioBufferRecognitionRequest()
         req.shouldReportPartialResults = true
         req.taskHint = .dictation
@@ -72,18 +89,20 @@ final class SpeechFollower {
                 DispatchQueue.main.async {
                     guard self.active, gen == self.generation else { return }
                     self.failsInARow = 0
+                    if text != self.lastText { self.lastText = text; self.voiceSeconds = 0 }
                     self.onText?(text, fin)
                 }
             }
             let ended = error != nil || (result?.isFinal ?? false)
             guard ended else { return }
-            let failed = error != nil && !got.value
+            // 1110 = "no se oyó voz": es solo un silencio, no una falla del reconocedor.
+            let failed = error != nil && !got.value && (error as NSError?)?.code != 1110
             DispatchQueue.main.async {
                 guard self.active, gen == self.generation else { return }
                 if failed {
                     self.failsInARow += 1
-                    // Dentro del iPhone no funcionó dos veces seguidas: pasar al reconocimiento en línea.
-                    if self.failsInARow >= 2 && self.preferOnDevice { self.preferOnDevice = false; self.failsInARow = 0 }
+                    // Falló dos veces seguidas: probar con el otro modo (dentro del iPhone o en línea).
+                    if self.failsInARow >= 2 && r.supportsOnDeviceRecognition { self.preferOnDevice.toggle(); self.failsInARow = 0 }
                 }
                 let wait = failed ? min(2.0, 0.3 * Double(max(1, self.failsInARow))) : 0.05
                 DispatchQueue.main.asyncAfter(deadline: .now() + wait) {
@@ -104,6 +123,8 @@ final class SpeechFollower {
     func stop() {
         active = false
         generation += 1
+        watchdog?.invalidate()
+        watchdog = nil
         lock.lock(); request?.endAudio(); request = nil; lock.unlock()
         task?.cancel()
         task = nil

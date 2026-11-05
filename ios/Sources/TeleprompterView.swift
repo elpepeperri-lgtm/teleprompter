@@ -35,6 +35,7 @@ final class PrompterModel: ObservableObject {
         speech.onText = { [weak self] text, fin in self?.apply(text, fin) }
         speech.onRestart = { [weak self] in self?.tracker?.resetSession() }
         speech.onProblem = { [weak self] m in self?.show(m) }
+        speech.micLevel = { [weak self] in self?.camera.micLevel ?? 0 }
     }
 
     var active: Bool { recording || rehearsing }
@@ -110,7 +111,7 @@ final class PrompterModel: ObservableObject {
         let shown = text.split(separator: " ").suffix(6).joined(separator: " ")
         if shown != heard { heard = shown }
         let p = t.update(words, isFinal: fin)
-        if p > pos { pos = p; savePos() }
+        if p != pos { pos = p; savePos() }
     }
 
     func tap(_ i: Int) {
